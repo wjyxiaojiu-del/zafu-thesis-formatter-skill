@@ -1,0 +1,27 @@
+# OS
+Thumbs.db
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+
+# Office temp
+~$*.docx
+*.tmp
+
+# Unpacked docx (不要提交解包后的文件)
+*_unpacked/
+unpacked/
+
+# Test files (不要提交论文原稿)
+*.docx
