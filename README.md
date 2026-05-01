@@ -1,4 +1,4 @@
-# ZAFU Thesis Formatter
+# ZAFU Thesis Formatter-Skill
 
 浙江农林大学本科生毕业论文（设计）格式自动排版工具。
 
