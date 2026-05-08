@@ -908,8 +908,12 @@ def main():
     # 1. Fix page setup
     stats['page_setup'] = fix_page_setup(root)
 
-    # 2. Process each paragraph
+    # 2. Process each paragraph. Preserve all front matter before the first
+    # body heading after the table of contents: cover, declaration, title,
+    # abstracts, keywords, and the TOC heading often have deliberate styling.
     heading_counters = [0, 0, 0, 0]
+    seen_toc = False
+    body_started = False
     for para in body.findall(w('p')):
         text = get_all_text(para)
         if not text:
@@ -925,6 +929,16 @@ def main():
         style_name = style_names.get(style_id, '')
 
         ptype = classify_paragraph(text, style_id, style_name)
+
+        if ptype == 'toc' or text.strip() in ('目  录', '目 录', '目录'):
+            seen_toc = True
+
+        if not body_started:
+            if seen_toc and ptype in ('h1', 'h2', 'h3', 'h4', 'ref_heading', 'ack_heading'):
+                body_started = True
+            else:
+                # Front matter is considered already formatted by the user.
+                continue
 
         if ptype == 'toc':
             # Fix TOC heading
@@ -1029,44 +1043,8 @@ def main():
             if fix_cn_punctuation(para):
                 stats['punctuation'] += 1
 
-    # Special handling: fix the thesis title (中文题目)
-    # Look for a paragraph that is:
-    # - Longer than 5 Chinese chars (typical thesis title)
-    # - Not a heading style (style 1,2,3,4 or TOC)
-    # - Not starting with a number (not a section heading)
-    # - Contains Chinese characters (not English title)
-    # - Appears before the first heading or abstract section
-    found_abstract = False
-    for para in body.findall(w('p')):
-        text = get_all_text(para)
-        if not text:
-            continue
-        if '摘要' in text or 'Abstract' in text:
-            found_abstract = True
-            break
-
-    if not found_abstract:
-        # Scan for title before any heading
-        for para in body.findall(w('p')):
-            text = get_all_text(para)
-            if not text or len(text) < 5:
-                continue
-            ppr = para.find(w('pPr'))
-            style_id = ''
-            if ppr is not None:
-                ps = ppr.find(w('pStyle'))
-                if ps is not None:
-                    style_id = ps.get(w('val'), '')
-            if style_id in ('1', '2', '3', '4', 'TOC1', 'TOC2', 'Heading1', 'Heading2'):
-                continue
-            # Check if it looks like a Chinese thesis title
-            has_cn = any('\u4e00' <= c <= '\u9fff' for c in text)
-            if has_cn and len(text) < 50:
-                # Not a heading (doesn't start with number), not a label
-                if not re.match(r'^[\d（\[]', text.strip()) and text.strip() not in ('目录', '摘要', '关键词', '致谢', '附录'):
-                    fix_title_paragraph(para)
-                    stats['title'] += 1
-                    break
+    # Do not auto-detect or restyle the thesis title. The cover/title/abstract
+    # area is front matter and must preserve the user's template styling.
 
     # Write back document.xml
     tree.write(doc_xml_path, xml_declaration=True, encoding='UTF-8')
