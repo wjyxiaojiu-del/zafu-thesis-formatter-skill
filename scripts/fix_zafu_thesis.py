@@ -2,12 +2,17 @@
 # -*- coding: utf-8 -*-
 """
 浙农林大学毕业论文格式修复脚本
-用法: python fix_zafu_thesis.py <unpacked_dir>
+用法:
+  python fix_zafu_thesis.py input.docx [output.docx]
+  python fix_zafu_thesis.py <unpacked_dir>
 """
 import sys
 import os
 import re
 import copy
+import shutil
+import tempfile
+import zipfile
 import xml.etree.ElementTree as ET
 
 ns_w = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
@@ -203,7 +208,17 @@ def classify_paragraph(text, style_id):
     if re.match(r'^\[\d+\]', t):
         return 'reference'
 
-    # Heading patterns
+    # Heading patterns. Check deeper dotted levels first so 1.1.1.1 is not
+    # accidentally classified as 1.1.1.
+    if re.match(r'^[1-7]\.\d+\.\d+\.\d+\s*\S*', t):
+        return 'h4'
+
+    if re.match(r'^[1-7]\.\d+\.\d+\s*\S*', t):
+        return 'h3'
+
+    if re.match(r'^[1-7]\.\d+\s*\S*', t):
+        return 'h2'
+
     # H1: "N.文字" format like "1.文献综述" (numbered chapters with dot)
     if re.match(r'^[1-7]\.[^\d]', t) and len(t) > 3:
         return 'h1'
@@ -216,28 +231,12 @@ def classify_paragraph(text, style_id):
     if re.match(r'^[1-7][\u4e00-\u9fff]', t) and len(t) > 2:
         return 'h1'
 
-    # Special H1: chapters with broken numbering like "4.1讨论", "5.1创新"
-    if re.match(r'^[4-5]\.1(讨论|创新)', t):
-        return 'h1'
-
     # Special headings: "引言", "致谢" etc. use H1 format (楷体加粗四号居中)
     if t in ('引言', '致谢', '附录', '结论'):
         return 'h1'
     # "参考文献" heading: 楷体加粗四号居中，段前段后6磅
     if t == '参考文献':
         return 'ref_heading'
-
-    # H2: "X.Y" pattern like 2.1, 3.1, 3.2 etc (with or without space after)
-    if re.match(r'^[1-7]\.\d+[^\d]', t) and not re.match(r'^[1-7]\.\d+\.\d+', t):
-        return 'h2'
-
-    # H3: "X.Y.Z" pattern like 2.1.1, 3.1.1 etc
-    if re.match(r'^[1-7]\.\d+\.\d+', t):
-        return 'h3'
-
-    # H4: "X.Y.Z.W" pattern like 2.1.1.1, 3.1.1.1 etc
-    if re.match(r'^[1-7]\.\d+\.\d+\.\d+', t):
-        return 'h4'
 
     # Table/figure captions
     if re.match(r'^表\s*\d+', t) or re.match(r'^图\s*\d+', t):
@@ -248,9 +247,15 @@ def classify_paragraph(text, style_id):
         return 'abstract_cn'
     if t.startswith('关键词') and ('：' in t or ':' in t or t == '关键词' or t == '关键词：'):
         return 'keywords_cn'
-    if t == 'Abstract' or t.startswith('Abstract:') or t == 'Abstract:':
+    if t == 'Abstract' or t.startswith('Abstract:') or t.startswith('Abstract：'):
         return 'abstract_en'
-    if t in ('Keywords', 'Key words') or t.startswith('Keywords:') or t.startswith('Key words:') or t.startswith('Key words: ') or t == 'Key words:':
+    if (t in ('Keywords', 'Key words', 'Key Words') or
+            t.startswith('Keywords:') or
+            t.startswith('Keywords：') or
+            t.startswith('Key words:') or
+            t.startswith('Key words：') or
+            t.startswith('Key Words：') or
+            t.startswith('Key Words:')):
         return 'keywords_en'
 
     # English title: all ASCII/Latin text, no Chinese chars, length > 10, not a label
@@ -476,6 +481,7 @@ def fix_cn_punctuation(para):
     """Fix half-width punctuation in Chinese body/abstract text to full-width.
     Only fixes commas and periods in text that contains Chinese characters.
     Does NOT modify: Key Words content, English-only paragraphs, formulas, references."""
+    changed = False
     for run in para.findall(w('r')):
         rt = run.find(w('t'))
         if rt is None or not rt.text:
@@ -516,6 +522,8 @@ def fix_cn_punctuation(para):
         new_text = ''.join(result)
         if new_text != text:
             rt.text = new_text
+            changed = True
+    return changed
 
 
 def fix_title_paragraph(para):
@@ -571,6 +579,21 @@ def fix_page_setup(root):
         fixes += 1
 
     return fixes
+
+
+def pack_docx(unpacked_dir, output_path):
+    """Pack an unpacked OOXML directory back into a DOCX file."""
+    with zipfile.ZipFile(output_path, 'w', zipfile.ZIP_DEFLATED) as z:
+        content_types = os.path.join(unpacked_dir, '[Content_Types].xml')
+        if os.path.exists(content_types):
+            z.write(content_types, '[Content_Types].xml')
+        for root_dir, _dirs, files in os.walk(unpacked_dir):
+            for filename in files:
+                file_path = os.path.join(root_dir, filename)
+                arcname = os.path.relpath(file_path, unpacked_dir).replace(os.sep, '/')
+                if arcname == '[Content_Types].xml':
+                    continue
+                z.write(file_path, arcname)
 
 
 def fix_toc_styles(styles_path):
@@ -677,10 +700,23 @@ def fix_toc_heading(para, text):
 
 def main():
     if len(sys.argv) < 2:
-        print("Usage: python fix_zafu_thesis.py <unpacked_dir>")
+        print("Usage: python fix_zafu_thesis.py input.docx [output.docx]")
+        print("   or: python fix_zafu_thesis.py <unpacked_dir>")
         sys.exit(1)
 
-    unpacked_dir = sys.argv[1]
+    input_path = sys.argv[1]
+    temp_dir = None
+    output_docx = None
+
+    if os.path.isfile(input_path) and input_path.lower().endswith('.docx'):
+        output_docx = sys.argv[2] if len(sys.argv) >= 3 else os.path.splitext(input_path)[0] + '_formatted.docx'
+        temp_dir = tempfile.mkdtemp(prefix='zafu_thesis_')
+        unpacked_dir = os.path.join(temp_dir, 'unpacked')
+        with zipfile.ZipFile(input_path, 'r') as z:
+            z.extractall(unpacked_dir)
+    else:
+        unpacked_dir = input_path
+
     doc_xml_path = os.path.join(unpacked_dir, 'word', 'document.xml')
 
     if not os.path.exists(doc_xml_path):
@@ -792,12 +828,14 @@ def main():
         elif ptype == 'body':
             fix_body_paragraph(para)
             # Fix half-width punctuation to full-width in Chinese body text
-            fix_cn_punctuation(para)
+            if fix_cn_punctuation(para):
+                stats['punctuation'] += 1
             stats['body'] += 1
 
         # Also fix punctuation in abstract_cn content
         if ptype == 'abstract_cn':
-            fix_cn_punctuation(para)
+            if fix_cn_punctuation(para):
+                stats['punctuation'] += 1
 
     # Special handling: fix the thesis title (中文题目)
     # Look for a paragraph that is:
@@ -858,6 +896,10 @@ def main():
         stree.write(settings_path, xml_declaration=True, encoding='UTF-8')
         print("Settings: updateFields enabled (TOC will auto-update on open)")
 
+    if output_docx:
+        pack_docx(unpacked_dir, output_docx)
+        print(f"Output written: {output_docx}")
+
     print("=== Fix Summary ===")
     print(f"Page setup sections fixed: {stats['page_setup']}")
     print(f"Title (CN) paragraphs fixed: {stats['title']}")
@@ -875,6 +917,9 @@ def main():
     print(f"TOC headings fixed: {stats['toc']}")
     print(f"Punctuation fixes applied in: {stats['punctuation']} additional paragraphs")
     print("Done!")
+
+    if temp_dir:
+        shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 if __name__ == '__main__':

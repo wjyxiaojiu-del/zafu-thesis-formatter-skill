@@ -1,0 +1,7 @@
+interface:
+  display_name: "ZAFU Thesis Formatter"
+  short_description: "Format ZAFU thesis DOCX files to the 2022 template."
+  default_prompt: "Use $zafu-thesis-formatter to format this Zhejiang A&F University thesis DOCX and list any manual checks still needed."
+
+policy:
+  allow_implicit_invocation: true

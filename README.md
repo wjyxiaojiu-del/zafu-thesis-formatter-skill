@@ -12,7 +12,7 @@
 - **正文格式**：宋体五号、两端对齐、首行缩进2字符、固定行距20磅
 - **摘要/关键词**：中文摘要（黑体标签+楷体内容）、英文摘要（Times New Roman）
 - **参考文献**：宋体五号、悬挂缩进2字符、左对齐
-- **标点修正**：正文和中文摘要中标点自动转全角，Key Words 用英文半角逗号
+- **标点修正**：正文和中文摘要中常见标点按中文规范处理，中文关键词用分号，Key Words 用英文半角逗号
 - **目录样式**：宋体五号+Times New Roman、固定行距20磅
 - **标题编号间距**：编号后自动替换为中文全角空格（U+3000）
 - **域自动更新**：打开文档时自动更新目录等域
@@ -32,10 +32,16 @@ pip install python-docx
 ### 使用方法
 
 ```bash
+python scripts/fix_zafu_thesis.py input.docx output.docx
+```
+
+也支持处理已解包的 OOXML 目录：
+
+```bash
 python scripts/fix_zafu_thesis.py <解包后的目录路径>
 ```
 
-### 完整工作流
+### 低层 OOXML 工作流（可选）
 
 1. **解包** .docx 文件（本质是 ZIP）：
    ```bash
