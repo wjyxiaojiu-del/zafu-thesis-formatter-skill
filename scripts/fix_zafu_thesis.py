@@ -274,11 +274,11 @@ def classify_paragraph(text, style_id, style_name=''):
 
     # Some Word files use localized built-in heading style ids where the visible
     # heading number comes from style numbering rather than paragraph text.
-    if style_id in ('2', 'Heading1', 'heading 1') or style_name_lower == 'heading 1':
+    if style_id in ('Heading1', 'heading 1') or style_name_lower == 'heading 1':
         return 'h1'
-    if style_id in ('3', 'Heading2', 'heading 2') or style_name_lower == 'heading 2':
+    if style_id in ('Heading2', 'heading 2') or style_name_lower == 'heading 2':
         return 'h2'
-    if style_id in ('4', 'Heading3', 'heading 3') or style_name_lower == 'heading 3':
+    if style_id in ('Heading3', 'heading 3') or style_name_lower == 'heading 3':
         return 'h3'
     if style_id in ('Heading4', 'heading 4') or style_name_lower == 'heading 4':
         return 'h4'
@@ -348,6 +348,7 @@ def fix_abstract_paragraph(para, text, label_font, content_font, content_size):
 def normalize_keyword_separators(para, language):
     """Normalize keyword labels and separators from detector feedback."""
     seen_label = False
+    previous_added_separator = False
     for run in para.findall(w('r')):
         rt = run.find(w('t'))
         if rt is None or not rt.text:
@@ -373,7 +374,13 @@ def normalize_keyword_separators(para, language):
             if seen_label:
                 normalized = text.replace('；', ', ').replace(';', ', ')
                 normalized = re.sub(r',\s*', ', ', normalized)
+                if previous_added_separator:
+                    normalized = normalized.lstrip()
+                if not normalized and text.isspace() and previous_added_separator:
+                    rt.text = ''
+                    continue
                 rt.text = normalized
+                previous_added_separator = normalized.endswith(', ')
 
 
 def fix_heading_spacing_after_number(para, level):
