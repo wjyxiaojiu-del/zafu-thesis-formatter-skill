@@ -193,15 +193,47 @@ def set_para_indent(para, first_line=None, first_line_chars=None, left=None, lef
         ind.set(w('hangingChars'), str(hanging_chars))
 
 
-def classify_paragraph(text, style_id):
+def disable_para_numbering(para):
+    """Disable inherited Word auto-numbering so explicit thesis numbers are used."""
+    ppr = para.find(w('pPr'))
+    if ppr is None:
+        ppr = ET.SubElement(para, w('pPr'))
+    num_pr = ppr.find(w('numPr'))
+    if num_pr is None:
+        num_pr = ET.SubElement(ppr, w('numPr'))
+    for child in list(num_pr):
+        num_pr.remove(child)
+    num_id = ET.SubElement(num_pr, w('numId'))
+    num_id.set(w('val'), '0')
+
+
+def load_style_names(styles_path):
+    """Return {styleId: styleName} for safer style-based classification."""
+    if not os.path.exists(styles_path):
+        return {}
+    try:
+        tree = ET.parse(styles_path)
+    except ET.ParseError:
+        return {}
+    names = {}
+    for style in tree.getroot().findall(w('style')):
+        sid = style.get(w('styleId'), '')
+        name_elem = style.find(w('name'))
+        if sid and name_elem is not None:
+            names[sid] = name_elem.get(w('val'), '')
+    return names
+
+
+def classify_paragraph(text, style_id, style_name=''):
     """Classify paragraph type based on text content and style."""
     t = text.strip()
+    style_name_lower = style_name.lower()
 
     if not t:
         return 'empty'
 
     # TOC entries
-    if style_id in ('TOC1', 'TOC2', 'toc 1', 'toc 2', '5', '6'):
+    if style_id in ('TOC1', 'TOC2', 'TOC3', 'toc 1', 'toc 2', 'toc 3') or 'toc' in style_name_lower:
         return 'toc'
 
     # References
@@ -232,15 +264,32 @@ def classify_paragraph(text, style_id):
         return 'h1'
 
     # Special headings: "引言", "致谢" etc. use H1 format (楷体加粗四号居中)
-    if t in ('引言', '致谢', '附录', '结论'):
+    if t == '致谢':
+        return 'ack_heading'
+    if t in ('引言', '附录', '结论'):
         return 'h1'
     # "参考文献" heading: 楷体加粗四号居中，段前段后6磅
     if t == '参考文献':
         return 'ref_heading'
 
+    # Some Word files use localized built-in heading style ids where the visible
+    # heading number comes from style numbering rather than paragraph text.
+    if style_id in ('2', 'Heading1', 'heading 1') or style_name_lower == 'heading 1':
+        return 'h1'
+    if style_id in ('3', 'Heading2', 'heading 2') or style_name_lower == 'heading 2':
+        return 'h2'
+    if style_id in ('4', 'Heading3', 'heading 3') or style_name_lower == 'heading 3':
+        return 'h3'
+    if style_id in ('Heading4', 'heading 4') or style_name_lower == 'heading 4':
+        return 'h4'
+
     # Table/figure captions
     if re.match(r'^表\s*\d+', t) or re.match(r'^图\s*\d+', t):
         return 'caption'
+
+    # Table notes below tables, usually "注：...".
+    if t.startswith('注：') or t.startswith('注:'):
+        return 'table_note'
 
     # Abstract labels
     if t.startswith('摘要') and ('：' in t or ':' in t or t == '摘要' or t == '摘要：'):
@@ -294,6 +343,37 @@ def fix_abstract_paragraph(para, text, label_font, content_font, content_size):
         else:
             # Content runs
             set_run_font(run, content_font, size=content_size, bold=False, bold_cs=False)
+
+
+def normalize_keyword_separators(para, language):
+    """Normalize keyword labels and separators from detector feedback."""
+    seen_label = False
+    for run in para.findall(w('r')):
+        rt = run.find(w('t'))
+        if rt is None or not rt.text:
+            continue
+        text = rt.text
+        stripped = text.strip()
+
+        if language == 'cn':
+            if stripped.startswith('关键词'):
+                seen_label = True
+                continue
+            if seen_label:
+                rt.text = text.replace(';', '；').replace(',', '；')
+        else:
+            if stripped in ('Keywords', 'Key Words', 'Key words'):
+                rt.text = text.replace(stripped, 'Key words')
+                seen_label = True
+                continue
+            if stripped in (':', '：'):
+                rt.text = ':'
+                seen_label = True
+                continue
+            if seen_label:
+                normalized = text.replace('；', ', ').replace(';', ', ')
+                normalized = re.sub(r',\s*', ', ', normalized)
+                rt.text = normalized
 
 
 def fix_heading_spacing_after_number(para, level):
@@ -375,8 +455,33 @@ def fix_heading_spacing_after_number(para, level):
                 next_rt.text = '\u3000' + rest
 
 
-def fix_heading(para, text, level):
+def set_heading_number_text(para, number):
+    """Materialize heading numbers and use one full-width space after them."""
+    disable_para_numbering(para)
+    runs = para.findall(w('r'))
+    text_runs = []
+    for run in runs:
+        rt = run.find(w('t'))
+        if rt is not None:
+            text_runs.append(rt)
+    if not text_runs:
+        run = ET.SubElement(para, w('r'))
+        rt = ET.SubElement(run, w('t'))
+        text_runs.append(rt)
+
+    full_text = ''.join(rt.text or '' for rt in text_runs).strip()
+    title = re.sub(r'^\d+(?:\.\d+)*[\.、]?[ \t\u3000]*', '', full_text).strip()
+    title = title.lstrip('\u3000').strip()
+    text_runs[0].text = f'{number}\u3000{title}' if title else str(number)
+    for rt in text_runs[1:]:
+        rt.text = ''
+
+
+def fix_heading(para, text, level, number=None):
     """Fix heading formatting based on level (1, 2, 3, 4)."""
+    if number is not None:
+        set_heading_number_text(para, number)
+
     # Fix all runs in the paragraph
     for run in para.findall(w('r')):
         if level == 1:
@@ -388,8 +493,10 @@ def fix_heading(para, text, level):
         elif level == 4:
             set_run_font(run, '宋体', size=21, bold=False, bold_cs=False)
 
-    # Fix spacing: replace ASCII space after heading number with full-width space
-    fix_heading_spacing_after_number(para, level)
+    # Fix spacing on pre-numbered headings. Computed headings already use one
+    # full-width space from set_heading_number_text().
+    if number is None:
+        fix_heading_spacing_after_number(para, level)
 
     # Fix paragraph properties
     if level == 1:
@@ -459,9 +566,32 @@ def fix_reference_heading(para):
     """Fix '参考文献' heading: 楷体加粗四号居中，段前段后6磅."""
     for run in para.findall(w('r')):
         set_run_font(run, '楷体', size=28, bold=True, bold_cs=True)
+    disable_para_numbering(para)
     set_para_alignment(para, 'center')
     set_para_spacing(para, before=120, after=120, line='400', line_rule='exact')
     # Remove indent
+    ppr = para.find(w('pPr'))
+    if ppr is not None:
+        ind = ppr.find(w('ind'))
+        if ind is not None:
+            ppr.remove(ind)
+
+
+def fix_ack_heading(para):
+    """Fix acknowledgement heading: 楷体四号加粗居中，写作'致  谢'."""
+    disable_para_numbering(para)
+    text_runs = []
+    for run in para.findall(w('r')):
+        rt = run.find(w('t'))
+        if rt is not None:
+            text_runs.append(rt)
+        set_run_font(run, '楷体', size=28, bold=True, bold_cs=True)
+    if text_runs:
+        text_runs[0].text = '致  谢'
+        for rt in text_runs[1:]:
+            rt.text = ''
+    set_para_alignment(para, 'center')
+    set_para_spacing(para, before=120, after=120, line='400', line_rule='exact')
     ppr = para.find(w('pPr'))
     if ppr is not None:
         ind = ppr.find(w('ind'))
@@ -475,6 +605,23 @@ def fix_caption_paragraph(para):
         set_run_font(run, '宋体', size=18, bold=False, bold_cs=False)
     set_para_alignment(para, 'center')
     set_para_spacing(para, before='0', after='0', line='400', line_rule='exact')
+
+
+def fix_table_note_paragraph(para):
+    """Fix table notes: 宋体小五, English/numbers Times New Roman, after spacing 1 line."""
+    for run in para.findall(w('r')):
+        set_run_font(run, '宋体', size=18, bold=False, bold_cs=False)
+    set_para_alignment(para, 'both')
+    set_para_spacing(para, before='0', line='400', line_rule='exact')
+    ppr = para.find(w('pPr'))
+    if ppr is None:
+        ppr = ET.SubElement(para, w('pPr'))
+    spacing = ppr.find(w('spacing'))
+    if spacing is None:
+        spacing = ET.SubElement(ppr, w('spacing'))
+    if w('after') in spacing.attrib:
+        del spacing.attrib[w('after')]
+    spacing.set(w('afterLines'), '100')
 
 
 def fix_cn_punctuation(para):
@@ -606,8 +753,9 @@ def fix_toc_styles(styles_path):
     tree = ET.parse(styles_path)
     root = tree.getroot()
 
-    # Map of styleId values for TOC styles
-    toc_style_ids = {'TOC1', 'TOC2', 'TOC3', 'toc 1', 'toc 2', 'toc 3', '5', '6', '7'}
+    # Match explicit TOC style ids/names only. Numeric style ids are unsafe
+    # because Word may assign them to heading styles in localized documents.
+    toc_style_ids = {'TOC1', 'TOC2', 'TOC3', 'toc 1', 'toc 2', 'toc 3'}
     fixed = 0
 
     for style in root.findall(w('style')):
@@ -618,12 +766,12 @@ def fix_toc_styles(styles_path):
         if sid not in toc_style_ids and 'toc' not in name.lower():
             continue
 
-        # Determine level: TOC1/toc 1/5 -> level 1, TOC2/toc 2/6 -> level 2, etc.
-        if sid in ('TOC1', 'toc 1', '5') or 'toc 1' in name.lower():
+        # Determine level: TOC1/toc 1 -> level 1, TOC2/toc 2 -> level 2, etc.
+        if sid in ('TOC1', 'toc 1') or 'toc 1' in name.lower():
             level = 1
-        elif sid in ('TOC2', 'toc 2', '6') or 'toc 2' in name.lower():
+        elif sid in ('TOC2', 'toc 2') or 'toc 2' in name.lower():
             level = 2
-        elif sid in ('TOC3', 'toc 3', '7') or 'toc 3' in name.lower():
+        elif sid in ('TOC3', 'toc 3') or 'toc 3' in name.lower():
             level = 3
         else:
             level = 1
@@ -718,6 +866,7 @@ def main():
         unpacked_dir = input_path
 
     doc_xml_path = os.path.join(unpacked_dir, 'word', 'document.xml')
+    styles_path = os.path.join(unpacked_dir, 'word', 'styles.xml')
 
     if not os.path.exists(doc_xml_path):
         print(f"Error: {doc_xml_path} not found")
@@ -727,6 +876,7 @@ def main():
     tree = ET.parse(doc_xml_path)
     root = tree.getroot()
     body = root.find(w('body'))
+    style_names = load_style_names(styles_path)
 
     stats = {
         'page_setup': 0,
@@ -740,7 +890,9 @@ def main():
         'body': 0,
         'reference': 0,
         'ref_heading': 0,
+        'ack_heading': 0,
         'caption': 0,
+        'table_note': 0,
         'toc': 0,
         'en_abstract': 0,
         'punctuation': 0,
@@ -750,6 +902,7 @@ def main():
     stats['page_setup'] = fix_page_setup(root)
 
     # 2. Process each paragraph
+    heading_counters = [0, 0, 0, 0]
     for para in body.findall(w('p')):
         text = get_all_text(para)
         if not text:
@@ -762,8 +915,9 @@ def main():
             ps = ppr.find(w('pStyle'))
             if ps is not None:
                 style_id = ps.get(w('val'), '')
+        style_name = style_names.get(style_id, '')
 
-        ptype = classify_paragraph(text, style_id)
+        ptype = classify_paragraph(text, style_id, style_name)
 
         if ptype == 'toc':
             # Fix TOC heading
@@ -775,16 +929,39 @@ def main():
             fix_en_title_paragraph(para)
             stats['en_title'] += 1
         elif ptype == 'h1':
-            fix_heading(para, text, 1)
+            heading_counters[0] += 1
+            heading_counters[1:] = [0, 0, 0]
+            number = str(heading_counters[0])
+            fix_heading(para, text, 1, number)
             stats['h1'] += 1
         elif ptype == 'h2':
-            fix_heading(para, text, 2)
+            if heading_counters[0] == 0:
+                heading_counters[0] = 1
+            heading_counters[1] += 1
+            heading_counters[2:] = [0, 0]
+            number = f'{heading_counters[0]}.{heading_counters[1]}'
+            fix_heading(para, text, 2, number)
             stats['h2'] += 1
         elif ptype == 'h3':
-            fix_heading(para, text, 3)
+            if heading_counters[0] == 0:
+                heading_counters[0] = 1
+            if heading_counters[1] == 0:
+                heading_counters[1] = 1
+            heading_counters[2] += 1
+            heading_counters[3] = 0
+            number = f'{heading_counters[0]}.{heading_counters[1]}.{heading_counters[2]}'
+            fix_heading(para, text, 3, number)
             stats['h3'] += 1
         elif ptype == 'h4':
-            fix_heading(para, text, 4)
+            if heading_counters[0] == 0:
+                heading_counters[0] = 1
+            if heading_counters[1] == 0:
+                heading_counters[1] = 1
+            if heading_counters[2] == 0:
+                heading_counters[2] = 1
+            heading_counters[3] += 1
+            number = f'{heading_counters[0]}.{heading_counters[1]}.{heading_counters[2]}.{heading_counters[3]}'
+            fix_heading(para, text, 4, number)
             stats['h4'] += 1
         elif ptype == 'abstract_cn':
             fix_abstract_paragraph(para, text, '黑体', '楷体', 21)
@@ -794,6 +971,7 @@ def main():
             stats['abstract'] += 1
         elif ptype == 'keywords_cn':
             fix_abstract_paragraph(para, text, '黑体', '楷体', 21)
+            normalize_keyword_separators(para, 'cn')
             # 标签用左侧缩进2字符
             set_para_indent(para, left='480', left_chars='200')
             set_para_spacing(para, line='400', line_rule='exact')
@@ -806,6 +984,7 @@ def main():
             stats['en_abstract'] += 1
         elif ptype == 'keywords_en':
             fix_abstract_paragraph(para, text, 'Times New Roman', 'Times New Roman', 21)
+            normalize_keyword_separators(para, 'en')
             # 标签用左侧缩进2字符
             set_para_indent(para, left='480', left_chars='200')
             set_para_spacing(para, line='400', line_rule='exact')
@@ -816,9 +995,15 @@ def main():
         elif ptype == 'ref_heading':
             fix_reference_heading(para)
             stats['ref_heading'] = stats.get('ref_heading', 0) + 1
+        elif ptype == 'ack_heading':
+            fix_ack_heading(para)
+            stats['ack_heading'] += 1
         elif ptype == 'caption':
             fix_caption_paragraph(para)
             stats['caption'] += 1
+        elif ptype == 'table_note':
+            fix_table_note_paragraph(para)
+            stats['table_note'] += 1
         elif ptype == 'formula':
             # Formula paragraphs - just fix alignment, keep content as-is
             set_para_alignment(para, 'both')
@@ -880,7 +1065,6 @@ def main():
     tree.write(doc_xml_path, xml_declaration=True, encoding='UTF-8')
 
     # Fix TOC styles in styles.xml: 宋体 + TNR + 五号
-    styles_path = os.path.join(unpacked_dir, 'word', 'styles.xml')
     toc_fixed = fix_toc_styles(styles_path)
     stats['toc_styles'] = toc_fixed
 
@@ -913,7 +1097,9 @@ def main():
     print(f"Body paragraphs fixed: {stats['body']}")
     print(f"Reference entries fixed: {stats['reference']}")
     print(f"Reference heading fixed: {stats['ref_heading']}")
+    print(f"Acknowledgement heading fixed: {stats['ack_heading']}")
     print(f"Caption paragraphs fixed: {stats['caption']}")
+    print(f"Table note paragraphs fixed: {stats['table_note']}")
     print(f"TOC headings fixed: {stats['toc']}")
     print(f"Punctuation fixes applied in: {stats['punctuation']} additional paragraphs")
     print("Done!")

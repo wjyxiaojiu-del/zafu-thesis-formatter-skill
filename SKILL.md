@@ -38,7 +38,7 @@ python scripts/fix_zafu_thesis.py unpacked/
 - Level 4+ heading: `宋体五号`, left aligned, left indent 2 Chinese characters, before/after `3 pt`.
 - Chinese abstract label and keyword label: `黑体五号` bold, left indent 2 Chinese characters.
 - Chinese abstract content and keyword content: `楷体五号`; Chinese keywords use semicolons (`；`) and generally 3-6 terms.
-- English abstract and `Key Words`: `Times New Roman 五号`; English keywords use commas (`,`).
+- English abstract and `Key words`: `Times New Roman 五号`; English keyword label should be `Key words:` and English keywords use comma+space (`, `).
 - TOC title: `宋体二号`, centered. TOC entries: `宋体五号`, English/numbers `Times New Roman`.
 - References: GB/T 7714 style; entries are `宋体五号`, left aligned, hanging indent 2 Chinese characters.
 - Table captions appear above tables; figure captions appear below figures; captions use `宋体小五`, centered.
@@ -49,7 +49,9 @@ python scripts/fix_zafu_thesis.py unpacked/
 - Page setup for document sections.
 - Chinese and English title paragraph formatting.
 - Numeric heading levels `1`, `1.1`, `1.1.1`, `1.1.1.1`.
+- Word style-numbered headings where the number is inherited from `heading 1/2/3`; the formatter materializes explicit heading numbers such as `1　标题` and disables inherited auto-numbering.
 - Abstract, keyword, body, reference, caption, and TOC styling.
+- Table notes beginning with `注：` / `注:` as `宋体小五` with one-line after spacing.
 - Chinese body punctuation for common half-width commas and sentence periods where safe.
 - `updateFields=true` so Word refreshes TOC/fields on open.
 
@@ -59,6 +61,7 @@ Some thesis requirements are content- or layout-dependent and must be checked af
 
 - Confirm the TOC refreshed correctly after opening in Word.
 - Confirm Chinese keywords use semicolons and English keywords use commas.
+- Confirm Chinese and English keyword counts match.
 - Check figures are inline/embedded as required, correctly sized, and not floating unpredictably.
 - Check table borders, especially three-line tables, because table semantics vary by document.
 - Check formula numbering and citations.
