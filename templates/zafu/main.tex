@@ -1,0 +1,46 @@
+%% main.tex — 浙江农林大学本科毕业论文主文件
+%% 用法：填写元数据和内容，用 XeLaTeX 编译
+\documentclass{zafu}
+
+% ========== 论文元数据（请修改） ==========
+\thesistitlezh{论文中文题目}
+\thesistitleen{English Title of the Thesis}
+\author{作者姓名}
+\studentid{20200000000}
+\college{林学与生物技术学院}
+\major{林学}
+\advisor{导师姓名\hspace{1\ccwd}教授}
+\date{二〇二六年五月}
+
+\begin{document}
+
+% ========== 封面 ==========
+\input{cover}
+
+% ========== 中文摘要 ==========
+\input{abstract-zh}
+
+% ========== 英文摘要 ==========
+\input{abstract-en}
+
+% ========== 目录 ==========
+\tableofcontents
+\clearpage
+
+% ========== 正文 ==========
+\input{chapters/chapter1}
+\input{chapters/chapter2}
+\input{chapters/chapter3}
+% 按需添加更多章节
+
+% ========== 参考文献 ==========
+\bibliographystyle{gbt7714-numerical}
+\bibliography{references}
+
+% ========== 致谢 ==========
+\input{acknowledgments}
+
+% ========== 附录（可选） ==========
+% \input{appendix}
+
+\end{document}

@@ -1,76 +1,82 @@
 ---
 name: zafu-thesis-formatter
-description: Format and QA Zhejiang A&F University undergraduate thesis DOCX files according to the 2022 thesis template, including page setup, Chinese/English fonts, heading hierarchy, abstracts, keywords, captions, references, TOC styles, and Word field updates.
+description: >
+  Format a Zhejiang A&F University undergraduate thesis using LaTeX (XeLaTeX).
+  Accepts .docx, .md, or .tex input. Outputs a perfectly formatted PDF matching
+  ZAFU 2022 thesis requirements: page margins, Chinese/English fonts, heading
+  hierarchy, abstracts, TOC, captions, references (GB/T 7714).
 ---
 
-# ZAFU Thesis Formatter
+# ZAFU Thesis Formatter (LaTeX)
 
-Use this skill when a user asks to format, repair, inspect, or QA a Zhejiang A&F University undergraduate thesis or design document (`.docx`) against the 2022 school requirements.
+Use this skill when a user asks to format, convert, compile, or QA a Zhejiang A&F University undergraduate thesis.
 
-## Core Workflow
-
-1. Preserve the original thesis file and write a new output file.
-2. Run the formatter:
+## Quick Start
 
 ```bash
-python scripts/fix_zafu_thesis.py input.docx output.docx
+# From Markdown
+python scripts/thesis_formatter.py input.md --university zafu
+
+# From Word
+python scripts/thesis_formatter.py input.docx --university zafu
+
+# From LaTeX (just compile)
+python scripts/thesis_formatter.py input.tex --university zafu
 ```
 
-3. Open or render the output DOCX to verify layout. Pay special attention to the cover/front matter, table of contents, abstract pages, first body page, captions, references, and appendices.
-4. Tell the user which items were automatically fixed and which items still need manual review.
+Output: `input_zafu.pdf` in the same directory.
 
-The script also accepts an unpacked OOXML directory for low-level repair:
+## Workflow
 
-```bash
-python scripts/fix_zafu_thesis.py unpacked/
+1. Detect input format (.docx / .md / .tex).
+2. If .docx → convert to Markdown via pandoc.
+3. If .md → inject into LaTeX template.
+4. If .tex → use directly.
+5. Apply university style (fonts, margins, headings).
+6. Compile with XeLaTeX (2 passes for TOC/references).
+7. Report compilation status and output path.
+
+## Template Structure
+
+```text
+templates/
+├── zafu/
+│   ├── main.tex          # Master document
+│   ├── zafu.cls          # University class file
+│   ├── preamble.tex      # Packages and settings
+│   ├── cover.tex         # Cover page
+│   ├── abstract-zh.tex   # Chinese abstract
+│   ├── abstract-en.tex   # English abstract
+│   ├── chapters/         # Body chapters
+│   ├── references.bib    # Bibliography
+│   └── appendix.tex      # Appendix
 ```
 
-## School Rules To Apply
+## User Must Provide
 
-- Paper: A4.
-- Body-page margins: top/bottom/left/right `2.7 cm`; header `1.8 cm`; footer `1.85 cm`.
-- Body text: Chinese `宋体`, English/numbers `Times New Roman`, `五号`, fixed `20 pt` line spacing, justified, first-line indent 2 Chinese characters.
-- Thesis title: Chinese `黑体三号`, centered, normally no more than 20 Chinese characters.
-- English title: `Times New Roman 三号`, centered.
-- Level 1 heading: `楷体四号` bold, centered, before/after `6 pt`, one full-width Chinese space after the number.
-- Level 2 heading: `黑体小四` bold, left aligned, left indent 2 Chinese characters, before/after `3 pt`.
-- Level 3 heading: `黑体五号`, left aligned, left indent 2 Chinese characters, before/after `3 pt`.
-- Level 4+ heading: `宋体五号`, left aligned, left indent 2 Chinese characters, before/after `3 pt`.
-- Chinese abstract label and keyword label: `黑体五号` bold, left indent 2 Chinese characters.
-- Chinese abstract content and keyword content: `楷体五号`; Chinese keywords use semicolons (`；`) and generally 3-6 terms.
-- English abstract and `Key words`: `Times New Roman 五号`; English keyword label should be `Key words:` and English keywords use comma+space (`, `).
-- TOC title: `宋体二号`, centered. TOC entries: `宋体五号`, English/numbers `Times New Roman`.
-- References: GB/T 7714 style; entries are `宋体五号`, left aligned, hanging indent 2 Chinese characters.
-- Table captions appear above tables; figure captions appear below figures; captions use `宋体小五`, centered.
-- Header text should be `宋体小五`, centered, where the document uses headers.
+- Thesis title (Chinese + English)
+- Author name
+- Student ID
+- Major / Advisor / College
+- Chinese abstract + keywords (3-6, semicolon-separated)
+- English abstract + Key words
+- Body content
+- References (BibTeX or plain text)
 
-## What The Script Fixes
+## ZAFU Formatting Rules
 
-- Page setup for document sections.
-- Chinese and English title paragraph formatting.
-- Numeric heading levels `1`, `1.1`, `1.1.1`, `1.1.1.1`.
-- Word style-numbered headings where the number is inherited from `heading 1/2/3`; the formatter materializes explicit heading numbers such as `1　标题` and disables inherited auto-numbering.
-- Abstract, keyword, body, reference, caption, and TOC styling.
-- Table notes beginning with `注：` / `注:` as `宋体小五` with one-line after spacing.
-- Chinese body punctuation for common half-width commas and sentence periods where safe.
-- `updateFields=true` so Word refreshes TOC/fields on open.
+See `templates/zafu/zafu.cls` for the complete specification. Key rules:
 
-## Manual Review Checklist
-
-Some thesis requirements are content- or layout-dependent and must be checked after formatting:
-
-- Confirm the TOC refreshed correctly after opening in Word.
-- Confirm Chinese keywords use semicolons and English keywords use commas.
-- Confirm Chinese and English keyword counts match.
-- Check figures are inline/embedded as required, correctly sized, and not floating unpredictably.
-- Check table borders, especially three-line tables, because table semantics vary by document.
-- Check formula numbering and citations.
-- Check section breaks and header/footer linkage across cover, abstract, TOC, body, and appendices.
-- Check references for GB/T 7714 content correctness; the formatter only adjusts paragraph appearance.
+- A4, margins 2.7cm all sides, header 1.8cm, footer 1.85cm
+- Body: 宋体 五号 (10.5pt), Times New Roman for English, fixed 20pt line spacing
+- Level 1 heading: 楷体 四号 bold centered
+- Level 2 heading: 黑体 小四 bold left-aligned
+- Level 3 heading: 黑体 五号 left-aligned
+- References: GB/T 7714-2015, [1] [2] numbering
 
 ## Guardrails
 
-- Do not rewrite thesis content unless the user asks for editing.
-- Do not apply this formatter to other universities or other-year templates without first comparing their rules.
-- Preserve formulas and Office Math runs; avoid forcing fonts inside math objects.
-- If automatic formatting changes many paragraphs, render or visually inspect the result before claiming it is ready.
+- Do not modify thesis content unless asked.
+- Preserve all formulas and math environments.
+- Two-pass compilation ensures correct TOC and reference numbering.
+- If compilation fails, show the LaTeX error log and suggest fixes.

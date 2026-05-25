@@ -1,1 +1,6 @@
-python-docx
+# System dependencies (install separately):
+# - MiKTeX or TeX Live (XeLaTeX)
+# - pandoc 3.0+
+#
+# MiKTeX packages to install:
+# mpm --install zhnumber amscls natbib multirow subfig caption gbt7714

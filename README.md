@@ -1,92 +1,95 @@
-# ZAFU Thesis Formatter Skill 2.0
+# ZAFU Thesis Formatter 3.0
 
-浙江农林大学本科生毕业论文（设计）格式自动排版 Skill。
+浙江农林大学本科毕业论文自动排版工具 — **LaTeX 驱动，格式 100% 确定性。**
 
-2.0 版本基于学校 2022 版论文要求和一篇带格式批注的真实论文样本迭代，重点修复检测器会明确标出的格式问题：标题编号、关键词分隔符、表注字号/间距、正文标点、目录域更新等。
+## 核心思路
 
-## 2.0 新增
-
-- **批注样本规则学习**：根据格式批注文档补充检测器实际会报错的规则。
-- **显式标题编号**：将 Word 自动编号标题转换为检测器更稳定识别的文本编号，如 `1　标题`、`1.1　标题`、`1.1.1　标题`。
-- **目录安全识别**：根据样式名称识别目录，避免目录条目被误当成正文标题参与编号。
-- **关键词规范化**：中文关键词使用中文分号 `；`；英文关键词标签规范为 `Key words:`，内容使用英文逗号加空格 `, `。
-- **表注修正**：`注：` / `注:` 开头的表格注释统一为宋体小五，并设置段后 1 行。
-- **致谢与参考文献标题处理**：禁用继承的自动编号，致谢标题规范为 `致  谢`。
-
-## 核心功能
-
-- **页面设置**：A4 纸、2.7cm 四边距、1.8cm 页眉、1.85cm 页脚。
-- **字体统一**：中文按规范使用宋体、黑体、楷体；英文和数字统一 Times New Roman。
-- **标题格式**：一级标题楷体四号加粗居中；二级标题黑体小四加粗；三级标题黑体五号；四级及以下宋体五号。
-- **正文格式**：宋体五号、两端对齐、首行缩进 2 字符、固定行距 20 磅。
-- **摘要/关键词**：中文摘要使用黑体标签和楷体内容；英文摘要使用 Times New Roman。
-- **参考文献**：宋体五号、左对齐、悬挂缩进 2 字符。
-- **题注/表注**：表题、图题使用宋体小五居中；表注使用宋体小五。
-- **标点修正**：正文和中文摘要中的常见半角标点按中文规范处理。
-- **域自动更新**：写入 `updateFields=true`，方便 Word 打开后刷新目录等域。
+Word 改格式 → 痛苦、不确定、每次都要调。
+LaTeX 排版 → 写一次模板，所有人永久受益。
 
 ## 快速开始
 
-### 环境要求
+```bash
+# Word 转 PDF（最常用）
+python scripts/thesis_formatter.py 你的论文.docx --university zafu
+
+# Markdown 转 PDF
+python scripts/thesis_formatter.py 你的论文.md --university zafu
+
+# 直接编译 LaTeX
+python scripts/thesis_formatter.py 你的论文.tex --university zafu
+```
+
+## 工作流
+
+```
+Word/PDF/Markdown
+      │
+      ▼
+  pandoc 转换 ──→ LaTeX 源文件
+      │
+      ▼
+  注入 ZAFU 模板（封面/摘要/目录/正文/参考文献）
+      │
+      ▼
+  XeLaTeX 编译（2 遍）
+      │
+      ▼
+  完美格式 PDF ✅
+```
+
+## 环境要求
 
 - Python 3.8+
+- MiKTeX 或 TeX Live（含 XeLaTeX）
+- pandoc 3.0+
 
-### 安装依赖
-
-```bash
-pip install python-docx
-```
-
-### 直接处理 DOCX
+### 安装缺失的 LaTeX 包（MiKTeX）
 
 ```bash
-python scripts/fix_zafu_thesis.py input.docx output.docx
+mpm --install zhnumber amscls natbib multirow subfig caption gbt7714
 ```
 
-如果不指定输出路径，脚本会在原文件旁生成 `_formatted.docx`。
+## 项目结构
 
-### 处理已解包的 OOXML 目录
-
-```bash
-python scripts/fix_zafu_thesis.py unpacked/
 ```
-
-## 建议工作流
-
-1. 保留原始论文文件。
-2. 运行 formatter 生成新 DOCX。
-3. 用 Word 打开输出文件并更新目录。
-4. 重点复核：目录、中文/英文关键词、正文标题编号、表注、参考文献、致谢、图片环绕和三线表。
+zafu-thesis-formatter-skill/
+├── SKILL.md                 # Claude Code skill 定义
+├── FORMAT_SPEC.md           # ZAFU 格式规范原文
+├── scripts/
+│   ├── thesis_formatter.py  # 主转换脚本
+│   └── fix_zafu_thesis.py   # Word 修复脚本（旧版）
+├── templates/
+│   └── zafu/
+│       ├── main.tex         # 主文件
+│       ├── zafu.cls         # 排版样式定义
+│       ├── cover.tex        # 封面
+│       ├── abstract-zh.tex  # 中文摘要
+│       ├── abstract-en.tex  # 英文摘要
+│       ├── acknowledgments.tex
+│       ├── references.bib   # 参考文献
+│       └── chapters/        # 正文章节
+├── requirements.txt
+├── LICENSE
+└── README.md
+```
 
 ## 格式规范
 
 详见 [FORMAT_SPEC.md](FORMAT_SPEC.md)。
 
-## 已知局限
+## 已知限制
 
-1. **三线表边框仍需人工复核**：脚本不自动判断复杂表格边框语义。
-2. **图片环绕方式需人工确认**：检测要求图片使用嵌入型，脚本目前不改图片布局。
-3. **题注不会自动生成**：脚本只修正已有表题、图题、表注格式。
-4. **目录需在 Word 中刷新**：脚本会设置自动更新域，但建议打开后手动确认目录页码。
-5. **页眉页脚和分节结构需复核**：封面、摘要、目录、正文之间的分节关系仍可能需要人工检查。
-6. **公式内容保持原样**：为避免 Office Math 渲染异常，公式对象不会被强制改写。
-7. **参考文献内容正确性不自动保证**：脚本只调整格式，GB/T 7714 著录内容仍需人工校对。
-8. **仅适用于浙江农林大学 2022 版要求**：其他学校或年份模板需重新比对规则。
+1. Word → LaTeX 转换依赖 pandoc，复杂格式可能需要人工微调
+2. 公式环境会尽量保留，但复杂 Office Math 可能需要手动修复
+3. 图片自动提取，但浮动体位置可能需要调整
+4. 参考文献格式按 GB/T 7714，但内容正确性需人工校对
 
-## 项目结构
+## 扩展到其他学校
 
-```text
-zafu-thesis-formatter-skill/
-├── SKILL.md
-├── agents/
-│   └── openai.yaml
-├── scripts/
-│   └── fix_zafu_thesis.py
-├── FORMAT_SPEC.md
-├── requirements.txt
-├── LICENSE
-└── README.md
-```
+1. 在 `templates/` 下新建学校目录（如 `templates/zju/`）
+2. 创建对应的 `.cls` 文件定义排版规则
+3. 修改 `thesis_formatter.py` 的模板映射
 
 ## 许可证
 

@@ -25,3 +25,13 @@ unpacked/
 
 # Test files (不要提交论文原稿)
 *.docx
+
+# LaTeX auxiliary files
+*.aux
+*.bbl
+*.blg
+*.log
+*.out
+*.toc
+*.pdf
+*.synctex.gz
