@@ -670,8 +670,12 @@ def apply_format(docx_path, rules, output_path=None):
 
         rule = rules.get(ptype)
         if not rule and ptype in ("heading1", "heading2", "heading3", "heading4"):
-            # 用官方默认规则
             rule = get_official_rule(ptype)
+        elif rule and ptype in ("heading1", "heading2", "heading3", "heading4"):
+            # 用官方规则补全缺失字段
+            official = get_official_rule(ptype)
+            merged = {**official, **rule}
+            rule = merged
 
         # 应用样式级格式（fallback）
         apply_style_fallback(para, rule)
