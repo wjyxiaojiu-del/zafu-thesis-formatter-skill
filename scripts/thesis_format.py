@@ -48,19 +48,18 @@ def classify_paragraph(para):
         return "heading_other"
 
     # 编号标题检测（自动编号，Normal 样式）
-    # H1: "1 标题" "2 标题"
-    if re.match(r'^\d+\s+\S', text) and not re.match(r'^\d+\.\d', text):
-        # 排除参考文献 "[1] ..." 和表格内容
+    # H1: "1 标题" "2标题"
+    if re.match(r'^\d+[\s　]+\S', text) and not re.match(r'^\d+\.\d', text):
         if not re.match(r'^\[\d+\]', text) and len(text) < 80:
             return "heading1"
-    # H2: "1.1 标题" "2.3 标题"
-    if re.match(r'^\d+\.\d+\s+\S', text) and not re.match(r'^\d+\.\d+\.\d', text):
+    # H2: "1.1 标题" "1.1标题"
+    if re.match(r'^\d+\.\d+[\s　]?\S', text) and not re.match(r'^\d+\.\d+\.\d', text):
         return "heading2"
-    # H3: "1.1.1 标题"
-    if re.match(r'^\d+\.\d+\.\d+\s+\S', text) and not re.match(r'^\d+\.\d+\.\d+\.\d', text):
+    # H3: "1.1.1 标题" "1.1.1标题"
+    if re.match(r'^\d+\.\d+\.\d+[\s　]?\S', text) and not re.match(r'^\d+\.\d+\.\d+\.\d', text):
         return "heading3"
-    # H4: "1.1.1.1 标题"
-    if re.match(r'^\d+\.\d+\.\d+\.\d+\s+\S', text):
+    # H4: "1.1.1.1 标题" "1.1.1.1标题"
+    if re.match(r'^\d+\.\d+\.\d+\.\d+[\s　]?\S', text):
         return "heading4"
 
     # TOC title
