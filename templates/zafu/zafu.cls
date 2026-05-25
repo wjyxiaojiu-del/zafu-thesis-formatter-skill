@@ -14,6 +14,7 @@
 ]{geometry}
 
 % ---------- 核心宏包 ----------
+\RequirePackage{etoolbox}        % 补丁命令
 \RequirePackage{fancyhdr}        % 页眉页脚
 \RequirePackage{titletoc}        % 目录格式
 \RequirePackage{graphicx}        % 图片
@@ -31,18 +32,11 @@
 \RequirePackage{float}           % 浮动体控制
 
 % ---------- 中文字体设置 ----------
-% ctex 已处理字体映射，这里确保关键字体可用
-\setCJKmainfont[BoldFont={SimHei}, ItalicFont={KaiTi}]{SimSun}
-\setCJKsansfont{SimHei}
-\setCJKmonofont{FangSong}
-
-% 定义特殊中文字体命令（ctex 已定义 heiti/songti/fangsong，这里只补 kaiti）
+% ctexbook 已自动配置宋体/黑体/仿宋，这里只补楷体和英文字体
 \newCJKfontfamily\kaiti{KaiTi}
 
 % 英文字体
 \setmainfont{Times New Roman}
-\setsansfont{Times New Roman}
-\setmonofont{Times New Roman}
 
 % ---------- 字号定义 ----------
 \newcommand{\zihaoerhao}{\fontsize{22pt}{26.4pt}\selectfont}       % 二号
@@ -169,19 +163,23 @@
 }
 
 % ---------- 用户可设置的元数据命令 ----------
-\newcommand{\thesistitlezh}[1]{\def\@thesistitlezh{#1}}
-\newcommand{\thesistitleen}[1]{\def\@thesistitleen{#1}}
-\newcommand{\studentid}[1]{\def\@studentid{#1}}
-\newcommand{\college}[1]{\def\@college{#1}}
-\newcommand{\major}[1]{\def\@major{#1}}
-\newcommand{\advisor}[1]{\def\@advisor{#1}}
+\newcommand{\thesistitlezh}[1]{\def\zafutitlezh{#1}}
+\newcommand{\thesistitleen}[1]{\def\zafutitleen{#1}}
+\newcommand{\studentid}[1]{\def\zafustudentid{#1}}
+\newcommand{\college}[1]{\def\zafucollege{#1}}
+\newcommand{\major}[1]{\def\zafumajor{#1}}
+\newcommand{\advisor}[1]{\def\zafuadvisor{#1}}
 
-\newcommand{\@thesistitlezh}{论文题目}
-\newcommand{\@thesistitleen}{Thesis Title}
-\newcommand{\@studentid}{}
-\newcommand{\@college}{}
-\newcommand{\@major}{}
-\newcommand{\@advisor}{}
+% Aliases for standard LaTeX \author and \date
+\let\zafuauthor\@author
+\let\zafudate\@date
+
+\newcommand{\zafutitlezh}{论文题目}
+\newcommand{\zafutitleen}{Thesis Title}
+\newcommand{\zafustudentid}{}
+\newcommand{\zafucollege}{}
+\newcommand{\zafumajor}{}
+\newcommand{\zafuadvisor}{}
 
 % ---------- 中文摘要环境 ----------
 \newenvironment{abstractzh}{%
