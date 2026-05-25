@@ -51,6 +51,28 @@ def classify_paragraph(para):
     if text.replace(" ", "").replace("　", "") in ("目录", "目　录"):
         return "toc_title"
 
+    # 论文标题：居中 + (大字号 或 Normal样式 + 无编号 + 短文本)
+    align = para.alignment
+    is_centered = (align == WD_ALIGN_PARAGRAPH.CENTER or str(align) == "CENTER (1)")
+    if is_centered and style_name in ("normal", ""):
+        # 检查 run 级字号
+        run_large = False
+        if para.runs and para.runs[0].font.size:
+            run_large = para.runs[0].font.size.pt >= 14
+        # 检查样式级字号
+        style_large = False
+        style_info = get_style_info(para)
+        if style_info.get("style_size_pt", 0) >= 14:
+            style_large = True
+        # 居中 + 大字号 + 不以数字开头 → 标题
+        if (run_large or style_large) and not re.match(r'^\d', text):
+            return "title"
+        # 居中 + Normal样式 + 不以数字开头 + 不是目录/摘要等 → 也可能是标题
+        if not re.match(r'^\d', text) and len(text) < 50 and not any(
+            text.startswith(k) for k in ("目", "摘", "Abstract", "Key", "参", "致", "附", "目 录")
+        ):
+            return "title"
+
     # Reference heading
     if text.replace(" ", "") in ("参考文献",):
         return "ref_heading"
@@ -583,6 +605,11 @@ def apply_format(docx_path, rules, output_path=None):
         if not seen_toc:
             continue
 
+        # 跳过论文标题（大字号居中段落），保持原样
+        if ptype == "title":
+            body_started = True
+            continue
+
         # 等到第一个标题出现才开始应用
         if not body_started:
             if ptype in ("heading1", "heading2", "heading3", "ref_heading", "ack_heading", "toc_title"):
@@ -615,6 +642,14 @@ def apply_format(docx_path, rules, output_path=None):
                 "content_font_cn": "宋体", "content_font_en": "Times New Roman",
                 "content_bold": False, "content_size": 10.5,
             })
+        # 标题：直接设置 run 级字体（从样式规则推导）
+        elif ptype in ("heading1", "heading2", "heading3"):
+            font_cn = rule.get("style_font_cn")
+            font_en = rule.get("style_font_en", "Times New Roman")
+            size_pt = rule.get("style_size_pt")
+            bold = rule.get("style_bold", True)
+            for run in para.runs:
+                _set_run_font(run, font_cn, font_en, size_pt, bold)
         else:
             # 应用字体格式到所有 runs
             for run in para.runs:
