@@ -540,6 +540,94 @@ def get_official_rule(ptype):
     return rules.get(ptype, {})
 
 
+def renumber_caption(text, chapter_num, fig_count, table_count):
+    """重新编号图/表标题。格式：图 X-Y 或 表 X-Y。"""
+    # 图：匹配 "图 1-1"、"图1-1"、"图 1‑1"（全角连字符）等
+    m = re.match(r'^(图|Fig\.?)\s*(\d+)\s*[-–—‑]\s*(\d+)(.*)', text, re.IGNORECASE)
+    if m:
+        prefix = m.group(1)
+        new_num = f"{chapter_num}-{fig_count + 1}"
+        rest = m.group(4)
+        return f"{prefix} {new_num}{rest}"
+
+    # 续表：不改编号，只保留
+    if text.startswith("续表"):
+        return text
+
+    # 表：匹配 "表 1-1"、"表1-1" 等
+    m = re.match(r'^(表|Table)\s*(\d+)\s*[-–—‑]\s*(\d+)(.*)', text, re.IGNORECASE)
+    if m:
+        prefix = m.group(1)
+        new_num = f"{chapter_num}-{table_count + 1}"
+        rest = m.group(4)
+        return f"{prefix} {new_num}{rest}"
+
+    return text
+
+
+def update_caption_text(para, new_text):
+    """更新段落文本（保留第一个 run 的格式）。"""
+    if not para.runs:
+        return
+    # 清空所有 run 的文本
+    for run in para.runs:
+        run.text = ""
+    # 把新文本写入第一个 run
+    para.runs[0].text = new_text
+
+
+def update_fields(doc):
+    """设置 updateFields=true，让 Word 打开时自动刷新域（目录、交叉引用等）。"""
+    from lxml import etree
+    ns_w = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+
+    # settings.xml
+    settings_part = doc.settings._element
+    uf = settings_part.find(f"{ns_w}updateFields")
+    if uf is None:
+        uf = etree.SubElement(settings_part, f"{ns_w}updateFields")
+    uf.set(f"{ns_w}val", "true")
+
+
+def check_references(doc):
+    """检测文中引用的图/表编号与实际编号是否匹配。"""
+    # 收集所有图/表的实际编号
+    actual_figs = {}
+    actual_tables = {}
+    chapter_num = 0
+
+    for para in doc.paragraphs:
+        text = para.text.strip()
+        if not text:
+            continue
+        style = (para.style.name if para.style else "").lower()
+        if style == "heading 1" or re.match(r'^\d+[\s　]+\S', text):
+            if not re.match(r'^\d+\.\d', text):
+                chapter_num += 1
+
+        m = re.match(r'^图\s*(\d+[-–—]\d+)', text)
+        if m:
+            actual_figs[m.group(1)] = text[:30]
+        m = re.match(r'^表\s*(\d+[-–—]\d+)', text)
+        if m:
+            actual_tables[m.group(1)] = text[:30]
+
+    # 检测文中引用
+    issues = []
+    for para in doc.paragraphs:
+        text = para.text
+        # 匹配 "图 X-Y"、"表 X-Y" 引用（不在行首的）
+        for m in re.finditer(r'(?<!^)(图|表)\s*(\d+\s*[-–—]\s*\d+)', text):
+            label = m.group(1)
+            num = re.sub(r'\s', '', m.group(2))  # 去空格
+            if label == "图" and num not in actual_figs:
+                issues.append(f"引用 图{num} 不存在（{text[:40]}）")
+            elif label == "表" and num not in actual_tables:
+                issues.append(f"引用 表{num} 不存在（{text[:40]}）")
+
+    return issues
+
+
 def apply_page_setup(doc, page_rule):
     """应用页面设置。"""
     if not page_rule:
@@ -635,6 +723,9 @@ def apply_format(docx_path, rules, output_path=None):
     seen_toc = False
     body_started = False
     stats = {k: 0 for k in rules if not k.startswith("_")}
+    chapter_num = 0
+    fig_count = 0
+    table_count = 0
 
     for para in doc.paragraphs:
         text = para.text.strip()
@@ -667,6 +758,24 @@ def apply_format(docx_path, rules, output_path=None):
                 body_started = True
             else:
                 continue
+
+        # 章节计数
+        if ptype == "heading1":
+            chapter_num += 1
+            fig_count = 0
+            table_count = 0
+
+        # 图/表自动编号
+        if ptype == "caption":
+            new_text = renumber_caption(para.text.strip(), chapter_num,
+                                        fig_count, table_count)
+            if new_text != para.text.strip():
+                update_caption_text(para, new_text)
+            # 更新计数
+            if para.text.strip().startswith("图") or para.text.strip().startswith("Fig"):
+                fig_count += 1
+            elif para.text.strip().startswith("表"):
+                table_count += 1
 
         rule = rules.get(ptype)
         if not rule and ptype in ("heading1", "heading2", "heading3", "heading4"):
@@ -716,12 +825,18 @@ def apply_format(docx_path, rules, output_path=None):
     # 修复 TOC 样式（目录条目字体）
     fix_toc_styles(doc)
 
+    # 设置 updateFields，打开 Word 时自动刷新目录和交叉引用
+    update_fields(doc)
+
+    # 检测引用错误
+    ref_issues = check_references(doc)
+
     # 保存
     if not output_path:
         p = Path(docx_path)
         output_path = p.parent / f"{p.stem}_formatted{p.suffix}"
     doc.save(str(output_path))
-    return output_path, stats
+    return output_path, stats, ref_issues
 
 
 # ============================================================
@@ -813,11 +928,17 @@ def main():
         output_path = sys.argv[4] if len(sys.argv) > 4 else None
         with open(rules_path, "r", encoding="utf-8") as f:
             rules = json.load(f)
-        output_path, stats = apply_format(docx_path, rules, output_path)
+        output_path, stats, ref_issues = apply_format(docx_path, rules, output_path)
         print(f"Applied to: {output_path}")
         for k, count in stats.items():
             if count > 0:
                 print(f"  {k}: {count} paragraphs")
+        if ref_issues:
+            print(f"\n⚠ 引用问题 ({len(ref_issues)}):")
+            for issue in ref_issues:
+                print(f"  {issue}")
+        else:
+            print("\n图/表引用检查通过")
 
     elif cmd == "check":
         docx_path = sys.argv[2]
