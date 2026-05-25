@@ -514,6 +514,8 @@ def get_official_rule(ptype):
             "style_size_pt": 14.0, "style_bold": True,
             "alignment": "CENTER (1)",
             "space_before_pt": 6, "space_after_pt": 6,
+            "line_spacing_pt": 20.0,
+            "first_line_indent_pt": 0, "left_indent_pt": 0,
         },
         "heading2": {
             "font_cn": "黑体", "font_en": "Times New Roman",
@@ -521,6 +523,8 @@ def get_official_rule(ptype):
             "style_font_cn": "黑体", "style_font_en": "Times New Roman",
             "style_size_pt": 12.0, "style_bold": True,
             "space_before_pt": 3, "space_after_pt": 3,
+            "line_spacing_pt": 20.0,
+            "first_line_indent_pt": 0, "left_indent_pt": 0,
         },
         "heading3": {
             "font_cn": "黑体", "font_en": "Times New Roman",
@@ -528,6 +532,8 @@ def get_official_rule(ptype):
             "style_font_cn": "黑体", "style_font_en": "Times New Roman",
             "style_size_pt": 10.5, "style_bold": False,
             "space_before_pt": 3, "space_after_pt": 3,
+            "line_spacing_pt": 20.0,
+            "first_line_indent_pt": 0, "left_indent_pt": 0,
         },
         "heading4": {
             "font_cn": "宋体", "font_en": "Times New Roman",
@@ -535,6 +541,8 @@ def get_official_rule(ptype):
             "style_font_cn": "宋体", "style_font_en": "Times New Roman",
             "style_size_pt": 10.5, "style_bold": False,
             "space_before_pt": 3, "space_after_pt": 3,
+            "line_spacing_pt": 20.0,
+            "first_line_indent_pt": 0, "left_indent_pt": 0,
         },
     }
     return rules.get(ptype, {})
@@ -787,9 +795,9 @@ def apply_format(docx_path, rules, output_path=None):
         if not rule and ptype in ("heading1", "heading2", "heading3", "heading4"):
             rule = get_official_rule(ptype)
         elif rule and ptype in ("heading1", "heading2", "heading3", "heading4"):
-            # 用官方规则补全缺失字段
+            # 用官方规则覆盖关键字段
             official = get_official_rule(ptype)
-            merged = {**official, **rule}
+            merged = {**rule, **official}
             rule = merged
 
         # 应用样式级格式（fallback）
