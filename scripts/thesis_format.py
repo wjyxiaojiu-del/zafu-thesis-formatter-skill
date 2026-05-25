@@ -37,7 +37,7 @@ def classify_paragraph(para):
     if style_name.startswith("toc"):
         return "toc"
 
-    # Heading styles
+    # Heading styles (Word 内置样式)
     if style_name == "heading 1":
         return "heading1"
     if style_name == "heading 2":
@@ -46,6 +46,22 @@ def classify_paragraph(para):
         return "heading3"
     if style_name.startswith("heading"):
         return "heading_other"
+
+    # 编号标题检测（自动编号，Normal 样式）
+    # H1: "1 标题" "2 标题"
+    if re.match(r'^\d+\s+\S', text) and not re.match(r'^\d+\.\d', text):
+        # 排除参考文献 "[1] ..." 和表格内容
+        if not re.match(r'^\[\d+\]', text) and len(text) < 80:
+            return "heading1"
+    # H2: "1.1 标题" "2.3 标题"
+    if re.match(r'^\d+\.\d+\s+\S', text) and not re.match(r'^\d+\.\d+\.\d', text):
+        return "heading2"
+    # H3: "1.1.1 标题"
+    if re.match(r'^\d+\.\d+\.\d+\s+\S', text) and not re.match(r'^\d+\.\d+\.\d+\.\d', text):
+        return "heading3"
+    # H4: "1.1.1.1 标题"
+    if re.match(r'^\d+\.\d+\.\d+\.\d+\s+\S', text):
+        return "heading4"
 
     # TOC title
     if text.replace(" ", "").replace("　", "") in ("目录", "目　录"):
@@ -489,6 +505,42 @@ def fix_toc_styles(doc):
             rpr.remove(b)
 
 
+def get_official_rule(ptype):
+    """返回浙江农林大学官方格式规则。"""
+    rules = {
+        "heading1": {
+            "font_cn": "楷体", "font_en": "Times New Roman",
+            "size_pt": 14.0, "bold": True,
+            "style_font_cn": "楷体", "style_font_en": "Times New Roman",
+            "style_size_pt": 14.0, "style_bold": True,
+            "alignment": "CENTER (1)",
+            "space_before_pt": 6, "space_after_pt": 6,
+        },
+        "heading2": {
+            "font_cn": "黑体", "font_en": "Times New Roman",
+            "size_pt": 12.0, "bold": True,
+            "style_font_cn": "黑体", "style_font_en": "Times New Roman",
+            "style_size_pt": 12.0, "style_bold": True,
+            "space_before_pt": 3, "space_after_pt": 3,
+        },
+        "heading3": {
+            "font_cn": "黑体", "font_en": "Times New Roman",
+            "size_pt": 10.5, "bold": False,
+            "style_font_cn": "黑体", "style_font_en": "Times New Roman",
+            "style_size_pt": 10.5, "style_bold": False,
+            "space_before_pt": 3, "space_after_pt": 3,
+        },
+        "heading4": {
+            "font_cn": "宋体", "font_en": "Times New Roman",
+            "size_pt": 10.5, "bold": False,
+            "style_font_cn": "宋体", "style_font_en": "Times New Roman",
+            "style_size_pt": 10.5, "style_bold": False,
+            "space_before_pt": 3, "space_after_pt": 3,
+        },
+    }
+    return rules.get(ptype, {})
+
+
 def apply_page_setup(doc, page_rule):
     """应用页面设置。"""
     if not page_rule:
@@ -612,14 +664,15 @@ def apply_format(docx_path, rules, output_path=None):
 
         # 等到第一个标题出现才开始应用
         if not body_started:
-            if ptype in ("heading1", "heading2", "heading3", "ref_heading", "ack_heading", "toc_title"):
+            if ptype in ("heading1", "heading2", "heading3", "heading4", "ref_heading", "ack_heading", "toc_title"):
                 body_started = True
             else:
                 continue
 
         rule = rules.get(ptype)
-        if not rule:
-            continue
+        if not rule and ptype in ("heading1", "heading2", "heading3", "heading4"):
+            # 用官方默认规则
+            rule = get_official_rule(ptype)
 
         # 应用样式级格式（fallback）
         apply_style_fallback(para, rule)
@@ -643,10 +696,10 @@ def apply_format(docx_path, rules, output_path=None):
                 "content_bold": False, "content_size": 10.5,
             })
         # 标题：直接设置 run 级字体（从样式规则推导）
-        elif ptype in ("heading1", "heading2", "heading3"):
-            font_cn = rule.get("style_font_cn")
-            font_en = rule.get("style_font_en", "Times New Roman")
-            size_pt = rule.get("style_size_pt")
+        elif ptype in ("heading1", "heading2", "heading3", "heading4"):
+            font_cn = rule.get("style_font_cn") or rule.get("font_cn")
+            font_en = rule.get("style_font_en") or rule.get("font_en", "Times New Roman")
+            size_pt = rule.get("style_size_pt") or rule.get("size_pt")
             bold = rule.get("style_bold", True)
             for run in para.runs:
                 _set_run_font(run, font_cn, font_en, size_pt, bold)
