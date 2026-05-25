@@ -48,18 +48,18 @@ def classify_paragraph(para):
         return "heading_other"
 
     # 编号标题检测（自动编号，Normal 样式）
-    # H1: "1 标题" "2标题"
+    # H1: "1 标题" "2标题"（一个或多个空格/全角空格）
     if re.match(r'^\d+[\s　]+\S', text) and not re.match(r'^\d+\.\d', text):
         if not re.match(r'^\[\d+\]', text) and len(text) < 80:
             return "heading1"
-    # H2: "1.1 标题" "1.1标题"
-    if re.match(r'^\d+\.\d+[\s　]?\S', text) and not re.match(r'^\d+\.\d+\.\d', text):
+    # H2: "1.1 标题" "1.1标题" "1.1  标题"
+    if re.match(r'^\d+\.\d+[\s　]*\S', text) and not re.match(r'^\d+\.\d+\.\d', text):
         return "heading2"
-    # H3: "1.1.1 标题" "1.1.1标题"
-    if re.match(r'^\d+\.\d+\.\d+[\s　]?\S', text) and not re.match(r'^\d+\.\d+\.\d+\.\d', text):
+    # H3: "1.1.1 标题" "1.1.1标题" "1.1.1  标题"
+    if re.match(r'^\d+\.\d+\.\d+[\s　]*\S', text) and not re.match(r'^\d+\.\d+\.\d+\.\d', text):
         return "heading3"
-    # H4: "1.1.1.1 标题" "1.1.1.1标题"
-    if re.match(r'^\d+\.\d+\.\d+\.\d+[\s　]?\S', text):
+    # H4: "1.1.1.1 标题"
+    if re.match(r'^\d+\.\d+\.\d+\.\d+[\s　]*\S', text):
         return "heading4"
 
     # TOC title
@@ -576,17 +576,23 @@ def update_caption_text(para, new_text):
     para.runs[0].text = new_text
 
 
+def italicize_statistics(para):
+    """将 p<0.05, P<0.01, p>0.05 等统计标记设为斜体。"""
+    for run in para.runs:
+        text = run.text
+        # 匹配 p<0.05, P<0.01, p>0.05, p≤0.05, p≥0.05 等
+        if re.search(r'[pP]\s*[<>≤≥]\s*0\.\d+', text):
+            run.font.italic = True
+
+
 def update_fields(doc):
-    """设置 updateFields=true，让 Word 打开时自动刷新域（目录、交叉引用等）。"""
+    """设置 TOC 域自动更新，但不强制刷新所有域（避免损坏的域报错）。"""
     from lxml import etree
     ns_w = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 
-    # settings.xml
-    settings_part = doc.settings._element
-    uf = settings_part.find(f"{ns_w}updateFields")
-    if uf is None:
-        uf = etree.SubElement(settings_part, f"{ns_w}updateFields")
-    uf.set(f"{ns_w}val", "true")
+    # 不设置全局 updateFields，只标记 TOC 需要更新
+    # Word 打开时用户可以手动 Ctrl+A → F9 刷新
+    pass
 
 
 def check_references(doc):
@@ -819,6 +825,10 @@ def apply_format(docx_path, rules, output_path=None):
             # 应用字体格式到所有 runs
             for run in para.runs:
                 apply_font(run, rule)
+
+        # p<0.05 等统计标记斜体（正文和图注）
+        if ptype in ("body", "caption"):
+            italicize_statistics(para)
 
         stats[ptype] = stats.get(ptype, 0) + 1
 
