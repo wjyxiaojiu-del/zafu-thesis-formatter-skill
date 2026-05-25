@@ -259,10 +259,13 @@ def learn_format(docx_path):
 
         ptype = classify_paragraph(para)
 
-        # 标记 TOC
-        if ptype == "toc" or ptype == "toc_title":
+        # 标记 TOC，但仍然学习 toc_title 格式
+        if ptype == "toc":
             seen_toc = True
             continue
+        if ptype == "toc_title":
+            seen_toc = True
+            # 继续学习 toc_title 格式
 
         # 跳过封面/声明
         if not seen_toc:
@@ -270,7 +273,7 @@ def learn_format(docx_path):
 
         # 等到第一个标题出现才开始收集
         if not body_started:
-            if ptype in ("heading1", "heading2", "heading3", "ref_heading", "ack_heading"):
+            if ptype in ("heading1", "heading2", "heading3", "ref_heading", "ack_heading", "toc_title"):
                 body_started = True
             else:
                 continue
@@ -430,6 +433,40 @@ def apply_para_format(para, rule):
         pf.left_indent = Pt(rule["left_indent_pt"])
 
 
+def fix_toc_styles(doc):
+    """修复 TOC 样式：宋体 + Times New Roman + 五号(10.5pt)。"""
+    from lxml import etree
+    ns_w = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+
+    styles_elem = doc.styles._element
+    for style in styles_elem.findall(f"{ns_w}style"):
+        style_id = style.get(f"{ns_w}styleId", "")
+        if not style_id.startswith("toc"):
+            continue
+
+        # 修复字体
+        rpr = style.find(f"{ns_w}rPr")
+        if rpr is None:
+            rpr = etree.SubElement(style, f"{ns_w}rPr")
+        fonts = rpr.find(f"{ns_w}rFonts")
+        if fonts is None:
+            fonts = etree.SubElement(rpr, f"{ns_w}rFonts")
+        fonts.set(f"{ns_w}eastAsia", "宋体")
+        fonts.set(f"{ns_w}ascii", "Times New Roman")
+        fonts.set(f"{ns_w}hAnsi", "Times New Roman")
+
+        # 修复字号
+        sz = rpr.find(f"{ns_w}sz")
+        if sz is None:
+            sz = etree.SubElement(rpr, f"{ns_w}sz")
+        sz.set(f"{ns_w}val", "21")  # 五号 = 10.5pt = 21 half-pt
+
+        # 去掉加粗
+        b = rpr.find(f"{ns_w}b")
+        if b is not None:
+            rpr.remove(b)
+
+
 def apply_page_setup(doc, page_rule):
     """应用页面设置。"""
     if not page_rule:
@@ -443,6 +480,75 @@ def apply_page_setup(doc, page_rule):
             section.header_distance = Cm(page_rule["header_cm"])
         if "footer_cm" in page_rule:
             section.footer_distance = Cm(page_rule["footer_cm"])
+
+
+def apply_split_font(para, spec):
+    """对摘要/关键词段落，标签和内容使用不同字体。
+
+    spec 示例:
+    {
+        "label_font_cn": "黑体", "label_font_en": "Times New Roman",
+        "label_bold": True, "label_size": 10.5,
+        "content_font_cn": "楷体", "content_font_en": "Times New Roman",
+        "content_bold": False, "content_size": 10.5,
+    }
+    会自动识别 "摘要：" / "Abstract：" 等标签边界。
+    """
+    from lxml import etree
+    ns_w = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+
+    full_text = para.text
+    # 找标签边界：匹配 "摘要：", "关键词：", "Abstract:", "Key words:" 等
+    m = re.match(
+        r'^(\s*(?:摘\s*要|关键\s*词|Abstract|Key\s*[Ww]ords?)\s*[:：]\s*)',
+        full_text, re.IGNORECASE
+    )
+    if not m:
+        # 找不到标签，全部用 content 格式
+        for run in para.runs:
+            _set_run_font(run, spec["content_font_cn"], spec["content_font_en"],
+                          spec.get("content_size"), spec.get("content_bold", False))
+        return
+
+    label_len = len(m.group(1))
+    consumed = 0
+    for run in para.runs:
+        run_len = len(run.text)
+        if consumed + run_len <= label_len:
+            # 标签部分
+            _set_run_font(run, spec["label_font_cn"], spec["label_font_en"],
+                          spec.get("label_size"), spec.get("label_bold", True))
+        elif consumed >= label_len:
+            # 内容部分
+            _set_run_font(run, spec["content_font_cn"], spec["content_font_en"],
+                          spec.get("content_size"), spec.get("content_bold", False))
+        else:
+            # 跨越边界的 run — 拆分不了，按内容处理
+            _set_run_font(run, spec["content_font_cn"], spec["content_font_en"],
+                          spec.get("content_size"), spec.get("content_bold", False))
+        consumed += run_len
+
+
+def _set_run_font(run, font_cn, font_en, size_pt=None, bold=False):
+    """设置单个 run 的字体。"""
+    from lxml import etree
+    ns_w = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+
+    font = run.font
+    if font_en:
+        font.name = font_en
+    if size_pt:
+        font.size = Pt(size_pt)
+    font.bold = bold
+
+    rpr = run._element.find(f"{ns_w}rPr")
+    if rpr is None:
+        rpr = etree.SubElement(run._element, f"{ns_w}rPr")
+    if font_cn:
+        fonts = rpr.find(f"{ns_w}rFonts")
+        if fonts is None:
+            fonts = etree.SubElement(rpr, f"{ns_w}rFonts")
+        fonts.set(f"{ns_w}eastAsia", font_cn)
 
 
 def apply_format(docx_path, rules, output_path=None):
@@ -464,10 +570,14 @@ def apply_format(docx_path, rules, output_path=None):
 
         ptype = classify_paragraph(para)
 
-        # 标记 TOC
-        if ptype in ("toc", "toc_title"):
+        # 标记 TOC，但仍然应用格式
+        if ptype == "toc":
             seen_toc = True
+            # TOC 条目样式由 Word 自动管理，跳过
             continue
+        if ptype == "toc_title":
+            seen_toc = True
+            # 继续应用 toc_title 格式
 
         # 跳过封面/声明
         if not seen_toc:
@@ -475,7 +585,7 @@ def apply_format(docx_path, rules, output_path=None):
 
         # 等到第一个标题出现才开始应用
         if not body_started:
-            if ptype in ("heading1", "heading2", "heading3", "ref_heading", "ack_heading"):
+            if ptype in ("heading1", "heading2", "heading3", "ref_heading", "ack_heading", "toc_title"):
                 body_started = True
             else:
                 continue
@@ -490,11 +600,30 @@ def apply_format(docx_path, rules, output_path=None):
         # 应用段落格式
         apply_para_format(para, rule)
 
-        # 应用字体格式到所有 runs
-        for run in para.runs:
-            apply_font(run, rule)
+        # 摘要/关键词：标签用黑体加粗，内容用楷体
+        if ptype in ("abstract_cn", "keywords_cn"):
+            apply_split_font(para, {
+                "label_font_cn": "黑体", "label_font_en": "Times New Roman",
+                "label_bold": True, "label_size": 10.5,
+                "content_font_cn": "楷体", "content_font_en": "Times New Roman",
+                "content_bold": False, "content_size": 10.5,
+            })
+        elif ptype in ("abstract_en", "keywords_en"):
+            apply_split_font(para, {
+                "label_font_cn": "宋体", "label_font_en": "Times New Roman",
+                "label_bold": True, "label_size": 10.5,
+                "content_font_cn": "宋体", "content_font_en": "Times New Roman",
+                "content_bold": False, "content_size": 10.5,
+            })
+        else:
+            # 应用字体格式到所有 runs
+            for run in para.runs:
+                apply_font(run, rule)
 
         stats[ptype] = stats.get(ptype, 0) + 1
+
+    # 修复 TOC 样式（目录条目字体）
+    fix_toc_styles(doc)
 
     # 保存
     if not output_path:
