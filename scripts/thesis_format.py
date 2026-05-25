@@ -1,44 +1,24 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-论文格式学习与应用工具
+论文格式学习与应用工具 v2
 从参考文档学习格式规则，然后批量应用到其他文档。
 
 用法:
-  python thesis_format.py learn reference.docx          # 学习格式，输出 rules.json
-  python thesis_format.py apply input.docx rules.json   # 应用格式，输出 _formatted.docx
-  python thesis_format.py check input.docx rules.json   # 检查差异，不修改
+  python thesis_format.py learn reference.docx [rules.json]
+  python thesis_format.py apply input.docx rules.json [output.docx]
+  python thesis_format.py check input.docx rules.json
 """
 import json
 import re
 import sys
+from collections import Counter
 from copy import deepcopy
 from pathlib import Path
 
 from docx import Document
 from docx.shared import Pt, Cm, Emu
 from docx.enum.text import WD_ALIGN_PARAGRAPH
-
-
-# ============================================================
-# 格式规则结构
-# ============================================================
-
-def make_rule():
-    return {
-        "font_cn": None,        # 中文字体
-        "font_en": None,        # 英文字体
-        "size_pt": None,        # 字号（磅）
-        "bold": None,           # 加粗
-        "italic": None,         # 斜体
-        "alignment": None,      # 对齐: left/center/right/justify
-        "line_spacing_pt": None,  # 固定行距（磅）
-        "line_spacing_rule": None,  # 行距规则
-        "space_before_pt": None,   # 段前间距
-        "space_after_pt": None,    # 段后间距
-        "first_line_indent_chars": None,  # 首行缩进（字符数）
-        "left_indent_chars": None,        # 左侧缩进（字符数）
-    }
 
 
 # ============================================================
@@ -51,36 +31,32 @@ def classify_paragraph(para):
     if not text:
         return "empty"
 
-    style_name = para.style.name if para.style else ""
+    style_name = (para.style.name if para.style else "").lower()
 
     # TOC styles
     if style_name.startswith("toc"):
         return "toc"
 
     # Heading styles
-    if style_name.startswith("Heading 1") or style_name == "heading 1":
+    if style_name == "heading 1":
         return "heading1"
-    if style_name.startswith("Heading 2") or style_name == "heading 2":
+    if style_name == "heading 2":
         return "heading2"
-    if style_name.startswith("Heading 3") or style_name == "heading 3":
+    if style_name == "heading 3":
         return "heading3"
-    if style_name.startswith("Heading") or style_name == "heading":
+    if style_name.startswith("heading"):
         return "heading_other"
 
-    # Content-based detection
-    if re.match(r'^\d+\s+\S', text) and style_name.startswith("Heading"):
-        return "heading1"
-
     # TOC title
-    if text in ("目  录", "目 录", "目录"):
+    if text.replace(" ", "").replace("　", "") in ("目录", "目　录"):
         return "toc_title"
 
     # Reference heading
-    if text in ("参考文献", "参 考 文 献"):
+    if text.replace(" ", "") in ("参考文献",):
         return "ref_heading"
 
     # Acknowledgment heading
-    if text in ("致谢", "致  谢", "致　谢"):
+    if text.replace(" ", "").replace("　", "") in ("致谢",):
         return "ack_heading"
 
     # References
@@ -91,66 +67,88 @@ def classify_paragraph(para):
     if re.match(r'^(图|表|Fig|Table)\s*\d', text):
         return "caption"
 
+    # 续表 captions
+    if text.startswith("续表"):
+        return "caption"
+
     # Table notes
     if text.startswith("注：") or text.startswith("注:"):
         return "table_note"
 
     # Abstract labels
-    if text.startswith("摘要") or text.startswith("摘 要"):
+    if re.match(r'^摘\s*要[：:]', text):
         return "abstract_cn"
-    if text.startswith("关键词") or text.startswith("关键 词"):
+    if re.match(r'^关键\s*词[：:]', text):
         return "keywords_cn"
-    if re.match(r'^Abstract', text, re.IGNORECASE):
+    if re.match(r'^Abstract[：:\s]', text, re.IGNORECASE):
         return "abstract_en"
-    if re.match(r'^Key\s*words', text, re.IGNORECASE):
+    if re.match(r'^Key\s*words[：:\s]', text, re.IGNORECASE):
         return "keywords_en"
-
-    # English title (all English, centered, large font)
-    if all(ord(c) < 128 or c in ' \t' for c in text) and len(text) > 20:
-        run = para.runs[0] if para.runs else None
-        if run and run.font.size and run.font.size.pt >= 14:
-            return "title_en"
-
-    # Chinese title (first large centered text)
-    run = para.runs[0] if para.runs else None
-    if run and run.font.size and run.font.size.pt >= 14:
-        align = para.alignment
-        if align == WD_ALIGN_PARAGRAPH.CENTER or str(align) == "CENTER (1)":
-            return "title_cn"
 
     return "body"
 
 
+def is_front_matter(para, seen_toc):
+    """判断段落是否属于封面/声明等前置部分。"""
+    if seen_toc:
+        return False
+    ptype = classify_paragraph(para)
+    if ptype in ("toc_title", "toc"):
+        return False
+    return True
+
+
 # ============================================================
-# 学习格式
+# 格式提取
 # ============================================================
 
 def get_font_info(para):
-    """从段落的第一个 run 提取字体信息。"""
-    info = {}
+    """从段落的所有 run 提取字体信息（多数投票）。"""
     if not para.runs:
-        return info
-    run = para.runs[0]
-    font = run.font
-    if font.name:
-        info["font_en"] = font.name
-    if font.size:
-        info["size_pt"] = round(font.size.pt, 1)
-    if font.bold is not None:
-        info["bold"] = font.bold
-    if font.italic is not None:
-        info["italic"] = font.italic
+        return {}
 
-    # 尝试从 XML 获取中文字体
+    fonts_en = []
+    fonts_cn = []
+    sizes = []
+    bolds = []
+
     from lxml import etree
     ns_w = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
-    rpr = run._element.find(f"{ns_w}rPr")
-    if rpr is not None:
-        fonts = rpr.find(f"{ns_w}rFonts")
-        if fonts is not None:
-            east = fonts.get(f"{ns_w}eastAsia")
-            if east:
-                info["font_cn"] = east
+
+    for run in para.runs:
+        text = run.text.strip()
+        if not text:
+            continue
+        f = run.font
+        if f.name:
+            fonts_en.append(f.name)
+        if f.size:
+            sizes.append(round(f.size.pt, 1))
+        bolds.append(bool(f.bold))
+
+        # 中文字体
+        rpr = run._element.find(f"{ns_w}rPr")
+        if rpr is not None:
+            fonts_elem = rpr.find(f"{ns_w}rFonts")
+            if fonts_elem is not None:
+                east = fonts_elem.get(f"{ns_w}eastAsia")
+                if east:
+                    fonts_cn.append(east)
+
+    info = {}
+    if fonts_cn:
+        info["font_cn"] = Counter(fonts_cn).most_common(1)[0][0]
+    if fonts_en:
+        info["font_en"] = Counter(fonts_en).most_common(1)[0][0]
+    if sizes:
+        info["size_pt"] = Counter(sizes).most_common(1)[0][0]
+    if bolds:
+        majority = sum(bolds) > len(bolds) / 2
+        if majority:
+            info["bold"] = True
+        else:
+            info["bold"] = False
+
     return info
 
 
@@ -185,6 +183,54 @@ def get_para_info(para):
     return info
 
 
+def get_style_info(para):
+    """从段落的 Word 样式提取格式信息。"""
+    from lxml import etree
+    ns_w = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+
+    style = para.style
+    if not style:
+        return {}
+
+    info = {}
+
+    # 样式的字体
+    style_elem = style._element
+    rpr = style_elem.find(f"{ns_w}rPr")
+    if rpr is not None:
+        fonts = rpr.find(f"{ns_w}rFonts")
+        if fonts is not None:
+            east = fonts.get(f"{ns_w}eastAsia")
+            if east:
+                info["style_font_cn"] = east
+            ascii_f = fonts.get(f"{ns_w}ascii")
+            if ascii_f:
+                info["style_font_en"] = ascii_f
+        sz = rpr.find(f"{ns_w}sz")
+        if sz is not None:
+            val = sz.get(f"{ns_w}val")
+            if val:
+                info["style_size_pt"] = int(val) / 2
+        b = rpr.find(f"{ns_w}b")
+        if b is not None:
+            info["style_bold"] = True
+
+    # 样式的段落格式
+    ppr = style_elem.find(f"{ns_w}pPr")
+    if ppr is not None:
+        jc = ppr.find(f"{ns_w}jc")
+        if jc is not None:
+            val = jc.get(f"{ns_w}val")
+            if val:
+                info["style_alignment"] = val
+
+    return info
+
+
+# ============================================================
+# 学习格式
+# ============================================================
+
 def learn_format(docx_path):
     """从参考文档学习格式规则。"""
     doc = Document(str(docx_path))
@@ -201,40 +247,80 @@ def learn_format(docx_path):
         "footer_cm": round(section.footer_distance.cm, 2),
     }
 
-    # 按类型收集样本
+    # 跳过封面/声明，从 TOC 之后开始收集
+    seen_toc = False
+    body_started = False
     samples = {}
+
     for para in doc.paragraphs:
-        ptype = classify_paragraph(para)
-        if ptype in ("empty", "toc"):
+        text = para.text.strip()
+        if not text:
             continue
+
+        ptype = classify_paragraph(para)
+
+        # 标记 TOC
+        if ptype == "toc" or ptype == "toc_title":
+            seen_toc = True
+            continue
+
+        # 跳过封面/声明
+        if not seen_toc:
+            continue
+
+        # 等到第一个标题出现才开始收集
+        if not body_started:
+            if ptype in ("heading1", "heading2", "heading3", "ref_heading", "ack_heading"):
+                body_started = True
+            else:
+                continue
+
         if ptype not in samples:
             samples[ptype] = []
         samples[ptype].append({
-            "text": para.text[:50],
+            "text": text[:50],
             "font": get_font_info(para),
             "para": get_para_info(para),
+            "style": get_style_info(para),
         })
 
-    # 每种类型取最常见的格式作为规则
+    # 每种类型取最常见的格式
     for ptype, items in samples.items():
         if not items:
             continue
 
-        # 合并字体信息（取第一个非空值）
-        font_rule = {}
-        for item in items:
-            for k, v in item["font"].items():
-                if k not in font_rule and v is not None:
-                    font_rule[k] = v
+        merged = {}
 
-        # 合并段落信息
-        para_rule = {}
-        for item in items:
-            for k, v in item["para"].items():
-                if k not in para_rule and v is not None:
-                    para_rule[k] = v
+        # 合并 run 级字体信息（多数投票）
+        for key in ("font_cn", "font_en", "size_pt", "bold"):
+            values = [item["font"].get(key) for item in items if item["font"].get(key) is not None]
+            if values:
+                if key == "size_pt":
+                    # 取最常见的字号
+                    merged[key] = Counter(values).most_common(1)[0][0]
+                elif key == "bold":
+                    merged[key] = sum(values) > len(values) / 2
+                else:
+                    merged[key] = Counter(values).most_common(1)[0][0]
 
-        rules[ptype] = {**font_rule, **para_rule}
+        # 合并样式级信息（作为 fallback）
+        for key in ("style_font_cn", "style_font_en", "style_size_pt", "style_bold", "style_alignment"):
+            values = [item["style"].get(key) for item in items if item["style"].get(key) is not None]
+            if values:
+                merged[key] = Counter(values).most_common(1)[0][0]
+
+        # 合并段落格式（取最常见的）
+        for key in ("alignment", "line_spacing_pt", "line_spacing_rule", "line_spacing_multiple",
+                     "space_before_pt", "space_after_pt", "first_line_indent_pt", "left_indent_pt"):
+            values = [item["para"].get(key) for item in items if item["para"].get(key) is not None]
+            if values:
+                if isinstance(values[0], (int, float)):
+                    merged[key] = Counter(values).most_common(1)[0][0]
+                else:
+                    merged[key] = Counter(values).most_common(1)[0][0]
+
+        # 只保留有内容的字段
+        rules[ptype] = {k: v for k, v in merged.items() if v is not None}
 
     return rules
 
@@ -249,6 +335,10 @@ ALIGN_MAP = {
     "RIGHT (2)": WD_ALIGN_PARAGRAPH.RIGHT,
     "JUSTIFY (3)": WD_ALIGN_PARAGRAPH.JUSTIFY,
     "DISTRIBUTE (4)": WD_ALIGN_PARAGRAPH.DISTRIBUTE,
+    "both": WD_ALIGN_PARAGRAPH.JUSTIFY,
+    "center": WD_ALIGN_PARAGRAPH.CENTER,
+    "left": WD_ALIGN_PARAGRAPH.LEFT,
+    "right": WD_ALIGN_PARAGRAPH.RIGHT,
 }
 
 
@@ -266,7 +356,7 @@ def apply_font(run, rule):
     if "font_en" in rule and rule["font_en"]:
         font.name = rule["font_en"]
 
-    # 中文字体需要通过 XML 设置
+    # 中文字体
     if "font_cn" in rule and rule["font_cn"]:
         from lxml import etree
         ns_w = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
@@ -279,6 +369,44 @@ def apply_font(run, rule):
         fonts.set(f"{ns_w}eastAsia", rule["font_cn"])
 
 
+def apply_style_fallback(para, rule):
+    """当 run 级没有信息时，用样式级信息更新样式定义。"""
+    if not rule:
+        return
+    from lxml import etree
+    ns_w = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+
+    style = para.style
+    if not style:
+        return
+    style_elem = style._element
+
+    # 更新样式的字体
+    if "style_font_cn" in rule or "style_font_en" in rule or "style_size_pt" in rule or "style_bold" in rule:
+        rpr = style_elem.find(f"{ns_w}rPr")
+        if rpr is None:
+            rpr = etree.SubElement(style_elem, f"{ns_w}rPr")
+        if "style_font_cn" in rule:
+            fonts = rpr.find(f"{ns_w}rFonts")
+            if fonts is None:
+                fonts = etree.SubElement(rpr, f"{ns_w}rFonts")
+            fonts.set(f"{ns_w}eastAsia", rule["style_font_cn"])
+        if "style_font_en" in rule:
+            fonts = rpr.find(f"{ns_w}rFonts")
+            if fonts is None:
+                fonts = etree.SubElement(rpr, f"{ns_w}rFonts")
+            fonts.set(f"{ns_w}ascii", rule["style_font_en"])
+        if "style_size_pt" in rule:
+            sz = rpr.find(f"{ns_w}sz")
+            if sz is None:
+                sz = etree.SubElement(rpr, f"{ns_w}sz")
+            sz.set(f"{ns_w}val", str(int(rule["style_size_pt"] * 2)))
+        if "style_bold" in rule:
+            b = rpr.find(f"{ns_w}b")
+            if b is None and rule["style_bold"]:
+                etree.SubElement(rpr, f"{ns_w}b")
+
+
 def apply_para_format(para, rule):
     """应用段落格式规则。"""
     if not rule:
@@ -289,7 +417,6 @@ def apply_para_format(para, rule):
         pf.alignment = ALIGN_MAP.get(rule["alignment"])
 
     if "line_spacing_pt" in rule and rule["line_spacing_pt"]:
-        from docx.shared import Pt
         pf.line_spacing = Pt(rule["line_spacing_pt"])
 
     if "space_before_pt" in rule and rule["space_before_pt"] is not None:
@@ -297,9 +424,9 @@ def apply_para_format(para, rule):
     if "space_after_pt" in rule and rule["space_after_pt"] is not None:
         pf.space_after = Pt(rule["space_after_pt"])
 
-    if "first_line_indent_pt" in rule and rule["first_line_indent_pt"]:
+    if "first_line_indent_pt" in rule and rule["first_line_indent_pt"] is not None:
         pf.first_line_indent = Pt(rule["first_line_indent_pt"])
-    if "left_indent_pt" in rule and rule["left_indent_pt"]:
+    if "left_indent_pt" in rule and rule["left_indent_pt"] is not None:
         pf.left_indent = Pt(rule["left_indent_pt"])
 
 
@@ -325,16 +452,40 @@ def apply_format(docx_path, rules, output_path=None):
     # 页面设置
     apply_page_setup(doc, rules.get("_page", {}))
 
+    # 跳过封面，从 TOC 之后开始应用
+    seen_toc = False
+    body_started = False
     stats = {k: 0 for k in rules if not k.startswith("_")}
 
     for para in doc.paragraphs:
-        ptype = classify_paragraph(para)
-        if ptype == "empty":
+        text = para.text.strip()
+        if not text:
             continue
+
+        ptype = classify_paragraph(para)
+
+        # 标记 TOC
+        if ptype in ("toc", "toc_title"):
+            seen_toc = True
+            continue
+
+        # 跳过封面/声明
+        if not seen_toc:
+            continue
+
+        # 等到第一个标题出现才开始应用
+        if not body_started:
+            if ptype in ("heading1", "heading2", "heading3", "ref_heading", "ack_heading"):
+                body_started = True
+            else:
+                continue
 
         rule = rules.get(ptype)
         if not rule:
             continue
+
+        # 应用样式级格式（fallback）
+        apply_style_fallback(para, rule)
 
         # 应用段落格式
         apply_para_format(para, rule)
@@ -362,10 +513,26 @@ def check_format(docx_path, rules):
     doc = Document(str(docx_path))
     issues = []
 
+    seen_toc = False
+    body_started = False
+
     for i, para in enumerate(doc.paragraphs):
-        ptype = classify_paragraph(para)
-        if ptype in ("empty", "toc"):
+        text = para.text.strip()
+        if not text:
             continue
+
+        ptype = classify_paragraph(para)
+
+        if ptype in ("toc", "toc_title"):
+            seen_toc = True
+            continue
+        if not seen_toc:
+            continue
+        if not body_started:
+            if ptype in ("heading1", "heading2", "heading3", "ref_heading", "ack_heading"):
+                body_started = True
+            else:
+                continue
 
         rule = rules.get(ptype)
         if not rule:
@@ -373,25 +540,25 @@ def check_format(docx_path, rules):
 
         font = get_font_info(para)
         para_info = get_para_info(para)
-        text = para.text[:40]
+        display_text = text[:40]
 
         # 检查字号
         if "size_pt" in rule and rule["size_pt"]:
             actual = font.get("size_pt")
             if actual and abs(actual - rule["size_pt"]) > 0.5:
-                issues.append(f"[{ptype}] para {i}: 字号 {actual}pt != {rule['size_pt']}pt | {text}")
+                issues.append(f"[{ptype}] para {i}: 字号 {actual}pt != {rule['size_pt']}pt | {display_text}")
 
         # 检查加粗
         if "bold" in rule and rule["bold"] is not None:
             actual = font.get("bold", False)
             if actual != rule["bold"]:
-                issues.append(f"[{ptype}] para {i}: bold={actual} != {rule['bold']} | {text}")
+                issues.append(f"[{ptype}] para {i}: bold={actual} != {rule['bold']} | {display_text}")
 
         # 检查对齐
         if "alignment" in rule and rule["alignment"]:
             actual = para_info.get("alignment", "")
             if actual and actual != rule["alignment"]:
-                issues.append(f"[{ptype}] para {i}: align={actual} != {rule['alignment']} | {text}")
+                issues.append(f"[{ptype}] para {i}: align={actual} != {rule['alignment']} | {display_text}")
 
     return issues
 
@@ -409,12 +576,12 @@ def main():
 
     if cmd == "learn":
         ref_path = sys.argv[2]
-        rules = learn_format(ref_path)
         output = sys.argv[3] if len(sys.argv) > 3 else "rules.json"
+        rules = learn_format(ref_path)
         with open(output, "w", encoding="utf-8") as f:
             json.dump(rules, f, ensure_ascii=False, indent=2)
         print(f"Learned {len([k for k in rules if not k.startswith('_')])} format rules")
-        print(f"Page setup: {rules.get('_page', {})}")
+        print(f"Page: {rules.get('_page', {})}")
         for k, v in rules.items():
             if not k.startswith("_"):
                 print(f"  {k}: {v}")
@@ -423,10 +590,11 @@ def main():
     elif cmd == "apply":
         docx_path = sys.argv[2]
         rules_path = sys.argv[3]
+        output_path = sys.argv[4] if len(sys.argv) > 4 else None
         with open(rules_path, "r", encoding="utf-8") as f:
             rules = json.load(f)
-        output_path, stats = apply_format(docx_path, rules)
-        print(f"Applied formatting to: {output_path}")
+        output_path, stats = apply_format(docx_path, rules, output_path)
+        print(f"Applied to: {output_path}")
         for k, count in stats.items():
             if count > 0:
                 print(f"  {k}: {count} paragraphs")
